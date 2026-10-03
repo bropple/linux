@@ -5,7 +5,6 @@
  * Copyright (C) 2022 Samuel Holland <samuel@sholland.org>
  */
 
-#include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/regmap.h>
@@ -326,7 +325,6 @@ static int wusb3801_probe(struct i2c_client *client)
 	struct fwnode_handle *connector;
 	struct wusb3801 *wusb3801;
 	const char *cap_str;
-	int retries;
 	int ret;
 
 	wusb3801 = devm_kzalloc(dev, sizeof(*wusb3801), GFP_KERNEL);
@@ -363,23 +361,10 @@ static int wusb3801_probe(struct i2c_client *client)
 		goto err_put_connector;
 	wusb3801->pwr_opmode = ret;
 
-	/*
-	 * Initialize the hardware with the devicetree settings. On the Cat S22
-	 * Flip the first write at boot is NACKed (-ENXIO) but succeeds a few
-	 * milliseconds later, so retry before giving up.
-	 */
-	for (retries = 5; ; retries--) {
-		ret = wusb3801_hw_init(wusb3801);
-		if (ret != -ENXIO || retries == 0)
-			break;
-		usleep_range(10000, 11000);
-	}
-	if (ret) {
-		dev_err(dev, "failed to initialize hardware: %d\n", ret);
+	/* Initialize the hardware with the devicetree settings. */
+	ret = wusb3801_hw_init(wusb3801);
+	if (ret)
 		goto err_put_connector;
-	}
-	if (retries < 5)
-		dev_info(dev, "initialized after %d retries\n", 5 - retries);
 
 	wusb3801->cap.revision		= USB_TYPEC_REV_1_2;
 	wusb3801->cap.accessory[0]	= TYPEC_ACCESSORY_AUDIO;
