@@ -14,6 +14,7 @@
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/leds/common.h>
+#include <dt-bindings/pinctrl/qcom,pmic-mpp.h>
 
 / {
 	model = "Cat S22 Flip";
@@ -28,6 +29,16 @@
 
 	chosen {
 		stdout-path = "serial0";
+	};
+
+	/* Main display backlight: PM8916 LPG on MPP4 (stock: bl_ctrl_pwm, bank 0) */
+	backlight: backlight {
+		compatible = "pwm-backlight";
+		pwms = <&pm8916_pwm 0 100000>;
+
+		brightness-levels = <0 255>;
+		num-interpolated-steps = <255>;
+		default-brightness-level = <128>;
 	};
 
 	/* Stock battery profile "Q2805": 2000 mAh, OCV table at 25 C */
@@ -251,17 +262,54 @@
 	};
 };
 
-/* DSI panel (Sitronix ST7701S) driver not written yet; rely on lk2nd's framebuffer */
-&mdss_dsi0 {
-	status = "disabled";
-};
-
-&mdss_dsi0_phy {
-	status = "disabled";
+&gpu {
+	status = "okay";
 };
 
 &mba_mem {
 	status = "okay";
+};
+
+&mdss {
+	status = "okay";
+};
+
+/* Stock gives the DSI "vdda" 1.744-1.904 V, i.e. L6, not L2 */
+&mdss_dsi0 {
+	vdda-supply = <&pm8916_l6>;
+	vddio-supply = <&pm8916_l6>;
+
+	panel: panel@0 {
+		/* lk2nd replaces this with the detected panel, e.g. "cat,s22flip-st7701s" */
+		compatible = "cat,s22flip-panel";
+		reg = <0>;
+
+		reset-gpios = <&tlmm 60 GPIO_ACTIVE_LOW>;
+
+		vdd-supply = <&pm8916_l17>;
+		vddio-supply = <&pm8916_l6>;
+
+		backlight = <&backlight>;
+
+		pinctrl-0 = <&panel_default>;
+		pinctrl-names = "default";
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&mdss_dsi0_out>;
+			};
+		};
+	};
+};
+
+&mdss_dsi0_out {
+	data-lanes = <0 1>;
+	remote-endpoint = <&panel_in>;
+};
+
+&mdss_dsi0_phy {
+	vddio-supply = <&pm8916_l6>;
+	qcom,dsi-phy-regulator-ldo-mode;
 };
 
 &modem {
@@ -288,6 +336,27 @@
 	qcom,fast-charge-safe-voltage = <4325000>;
 
 	monitored-battery = <&bat>;
+
+	status = "okay";
+};
+
+&pm8916_mpps {
+	/*
+	 * The LPG reaches MPP4 over DTEST2 on this board, not DTEST1 as on the
+	 * msm8916 reference designs: the bootloader leaves MODE_CTL at 0x1a.
+	 */
+	pwm_out: mpp4-state {
+		pins = "mpp4";
+		function = "digital";
+		power-source = <PM8916_MPP_VPH>;
+		output-low;
+		qcom,dtest = <2>;
+	};
+};
+
+&pm8916_pwm {
+	pinctrl-0 = <&pwm_out>;
+	pinctrl-names = "default";
 
 	status = "okay";
 };
@@ -539,6 +608,13 @@
 		function = "gpio";
 		drive-strength = <2>;
 		bias-pull-down;
+	};
+
+	panel_default: panel-default-state {
+		pins = "gpio60";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
 	};
 
 	sdc2_cd_default: sdc2-cd-default-state {
