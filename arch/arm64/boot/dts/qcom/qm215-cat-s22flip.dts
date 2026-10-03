@@ -191,6 +191,9 @@
 };
 
 &blsp2_i2c1 {
+	/* The first transfer after boot is NACKed; see i2c-qup */
+	cat,first-transfer-lost;
+
 	status = "okay";
 
 	/* 0x34: Awinic AW88194A speaker amplifier, no mainline driver yet */
