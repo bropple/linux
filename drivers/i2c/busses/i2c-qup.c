@@ -1926,6 +1926,22 @@ nodma:
 	pm_runtime_set_active(qup->dev);
 	pm_runtime_enable(qup->dev);
 
+	/*
+	 * On some buses (blsp2_i2c1 on the Cat S22 Flip) the first transfer
+	 * after boot is lost (NACKed) whatever the address, while every later
+	 * one works. Spend that first transfer on a reserved address before
+	 * any client can see the bus.
+	 */
+	if (device_property_read_bool(qup->dev, "cat,first-transfer-lost")) {
+		u8 dummy;
+		struct i2c_msg msg = {
+			.addr = 0x7f, .flags = I2C_M_RD, .len = 1, .buf = &dummy,
+		};
+
+		ret = qup->adap.algo->xfer(&qup->adap, &msg, 1);
+		dev_dbg(qup->dev, "first-transfer workaround: %d\n", ret);
+	}
+
 	ret = i2c_add_adapter(&qup->adap);
 	if (ret)
 		goto fail_runtime;

@@ -32,6 +32,13 @@ properties:
   clock-frequency:
     default: 100000
 
+  cat,first-transfer-lost:
+    type: boolean
+    description:
+      The first transfer on this bus after boot is lost (NACKed) whatever
+      the address. The driver spends it on a dummy read of reserved
+      address 0x7f at probe.
+
   dmas:
     maxItems: 2
 
