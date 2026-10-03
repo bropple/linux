@@ -25,8 +25,8 @@
 };
 
 &usb_hs_phy {
-	v1p8-supply = <&pm8916_l7>;
-	v3p3-supply = <&pm8916_l13>;
+	vdda1p8-supply = <&pm8916_l7>;
+	vdda3p3-supply = <&pm8916_l13>;
 };
 
 &wcnss {
