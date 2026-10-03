@@ -178,6 +178,19 @@
 	};
 };
 
+&adsp {
+	firmware-name = "qcom/qm215/cat/s22flip/adsp.mbn";
+	status = "okay";
+};
+
+&adsp_mem {
+	status = "okay";
+};
+
+&apr {
+	status = "okay";
+};
+
 &bam_dmux {
 	status = "okay";
 };
@@ -283,6 +296,10 @@
 	status = "okay";
 };
 
+&lpass_codec {
+	status = "okay";
+};
+
 &mba_mem {
 	status = "okay";
 };
@@ -367,6 +384,21 @@
 	status = "okay";
 };
 
+&pm8916_codec {
+	vdd-cdc-io-supply = <&pm8916_l5>;
+	vdd-cdc-tx-rx-cx-supply = <&pm8916_l5>;
+	vdd-micbias-supply = <&pm8916_l13>;
+
+	/* Stock: qcom,msm-mbhc-hphl-swh = <1>, qcom,msm-mbhc-gnd-swh = <1> */
+	qcom,hphl-jack-type-normally-open;
+	qcom,gnd-jack-type-normally-open;
+	qcom,micbias1-ext-cap;
+	qcom,mbhc-vthreshold-low = <75 150 225 450 500>;
+	qcom,mbhc-vthreshold-high = <75 150 225 450 500>;
+
+	status = "okay";
+};
+
 &pm8916_mpps {
 	/*
 	 * The LPG reaches MPP4 over DTEST2 on this board, not DTEST1 as on the
@@ -417,6 +449,93 @@
 
 &sleep_clk {
 	clock-frequency = <32768>;
+};
+
+&sound {
+	model = "cat-s22flip";
+
+	/*
+	 * Stock: handset mic on AMIC1 and secondary mic on AMIC3, both on
+	 * external MIC BIAS 1; headset mic on AMIC2 with MIC BIAS 2.
+	 */
+	audio-routing =
+		"AMIC1", "MIC BIAS External1",
+		"AMIC2", "MIC BIAS External2",
+		"AMIC3", "MIC BIAS External1",
+		"MM_DL1", "MultiMedia1 Playback",
+		"MM_DL3", "MultiMedia3 Playback",
+		"MM_DL4", "MultiMedia4 Playback",
+		"MultiMedia2 Capture", "MM_UL2";
+
+	pinctrl-0 = <&cdc_pdm_default>;
+	pinctrl-1 = <&cdc_pdm_sleep>;
+	pinctrl-names = "default", "sleep";
+
+	status = "okay";
+
+	mm1-dai-link {
+		link-name = "MultiMedia1";
+
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
+		};
+	};
+
+	mm2-dai-link {
+		link-name = "MultiMedia2";
+
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
+		};
+	};
+
+	mm3-dai-link {
+		link-name = "MultiMedia3";
+
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA3>;
+		};
+	};
+
+	mm4-dai-link {
+		link-name = "MultiMedia4";
+
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA4>;
+		};
+	};
+
+	primary-mi2s-dai-link {
+		link-name = "Primary MI2S";
+
+		cpu {
+			sound-dai = <&q6afedai PRIMARY_MI2S_RX>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+
+		codec {
+			sound-dai = <&lpass_codec 0>, <&pm8916_codec 0>;
+		};
+	};
+
+	tertiary-mi2s-dai-link {
+		link-name = "Tertiary MI2S";
+
+		cpu {
+			sound-dai = <&q6afedai TERTIARY_MI2S_TX>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+
+		codec {
+			sound-dai = <&lpass_codec 1>, <&pm8916_codec 1>;
+		};
+	};
 };
 
 &usb {
@@ -556,6 +675,20 @@
 };
 
 &tlmm {
+	cdc_pdm_default: cdc-pdm-default-state {
+		pins = "gpio69", "gpio70", "gpio71", "gpio72", "gpio73", "gpio74";
+		function = "cdc_pdm0";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	cdc_pdm_sleep: cdc-pdm-sleep-state {
+		pins = "gpio69", "gpio70", "gpio71", "gpio72", "gpio73", "gpio74";
+		function = "cdc_pdm0";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
 	ext_backlight_default: ext-backlight-default-state {
 		pins = "gpio12";
 		function = "gpio";
