@@ -265,6 +265,20 @@
 	};
 };
 
+&cpu_opp_table {
+	/*
+	 * This QM215 is fused as speed bin 2 (stock: 960, 1094.4, 1209.6 MHz).
+	 * The msm8917 table has steps above that and no voltages to go with
+	 * them, so match stock.
+	 */
+	/delete-node/ opp-1248000000;
+	/delete-node/ opp-1401600000;
+
+	opp-1209600000 {
+		opp-hz = /bits/ 64 <1209600000>;
+	};
+};
+
 &gpu {
 	status = "okay";
 };
@@ -325,6 +339,16 @@
 &mpss_mem {
 	reg = <0x0 0x86800000 0x0 0x5500000>;
 	status = "okay";
+};
+
+&pll_opp_table {
+	/* Speed bin 2; see cpu_opp_table */
+	/delete-node/ opp-1248000000;
+	/delete-node/ opp-1401600000;
+
+	opp-1209600000 {
+		opp-hz = /bits/ 64 <1209600000>;
+	};
 };
 
 &pm8916_bms {
