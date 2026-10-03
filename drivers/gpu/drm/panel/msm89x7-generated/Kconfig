@@ -5,6 +5,10 @@ menu "MSM89x7 panel drivers generated with linux-mdss-dsi-panel-driver-generator
 config DRM_PANEL_MSM89X7_GENERATED
 	tristate "Select all generated MSM89X7 panel drivers by default"
 
+config DRM_PANEL_CAT_S22FLIP_ST7701S
+	tristate "Cat S22 Flip ST7701S"
+	default DRM_PANEL_MSM89X7_GENERATED
+
 config DRM_PANEL_LENOVO_TBX304X_JD9364_BOE
 	tristate "Lenovo TBX304X JD9364 BOE"
 	default DRM_PANEL_MSM89X7_GENERATED
