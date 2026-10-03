@@ -218,6 +218,12 @@ properties:
 
       - items:
           - enum:
+              - cat,s22flip
+          - const: qcom,qm215
+          - const: qcom,msm8917
+
+      - items:
+          - enum:
               - xiaomi,land
           - const: qcom,msm8937
 
