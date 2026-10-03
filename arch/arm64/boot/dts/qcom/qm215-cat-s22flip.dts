@@ -1,0 +1,455 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Cat S22 Flip (QM215 + PM8916)
+ *
+ * Values marked "stock" come from the vendor device tree as running on
+ * firmware LTE_S02113.11_N_S22Flip_0.030.03 (board id 12, dtbo 27).
+ */
+
+/dts-v1/;
+
+#include "qm215-pm8916.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/leds/common.h>
+
+/ {
+	model = "Cat S22 Flip";
+	compatible = "cat,s22flip", "qcom,qm215", "qcom,msm8917";
+	chassis-type = "handset";
+
+	aliases {
+		mmc0 = &sdhc_1;
+		mmc1 = &sdhc_2;
+		serial0 = &blsp1_uart2;
+	};
+
+	chosen {
+		stdout-path = "serial0";
+	};
+
+	/* Stock battery profile "Q2805": 2000 mAh, OCV table at 25 C */
+	bat: battery {
+		compatible = "simple-battery";
+		voltage-min-design-microvolt = <3400000>;
+		/* Stock charger vddmax; the cell profile allows up to 4.35 V */
+		voltage-max-design-microvolt = <4325000>;
+		charge-full-design-microamp-hours = <2000000>;
+		charge-term-current-microamp = <90000>;
+
+		ocv-capacity-celsius = <25>;
+		ocv-capacity-table-0 = <4318000 100>, <4246000 95>,
+			<4190000 90>, <4136000 85>, <4084000 80>, <4038000 75>,
+			<3982000 70>, <3952000 65>, <3912000 60>, <3866000 55>,
+			<3834000 50>, <3812000 45>, <3795000 40>, <3782000 35>,
+			<3772000 30>, <3763000 25>, <3756000 20>, <3739000 16>,
+			<3732000 13>, <3725000 11>, <3718000 10>, <3686000 9>,
+			<3684000 8>, <3682000 7>, <3676000 6>, <3654000 5>,
+			<3610000 4>, <3549000 3>, <3470000 2>, <3345000 1>,
+			<3000000 0>;
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		pinctrl-0 = <&gpio_keys_default>, <&lid_switch_default>;
+		pinctrl-names = "default";
+
+		label = "GPIO Buttons";
+
+		button-volume-up {
+			label = "Volume Up";
+			gpios = <&tlmm 91 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_VOLUMEUP>;
+			debounce-interval = <15>;
+			wakeup-source;
+		};
+
+		switch-lid-close {
+			label = "Lid";
+			gpios = <&tlmm 44 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_SW>;
+			linux,code = <SW_LID>;
+			wakeup-source;
+		};
+	};
+
+	/*
+	 * Stock scans this matrix active-high (no gpio-activelow): columns are
+	 * driven high and a pressed key pulls its row high, so rows need
+	 * pull-downs. Keycodes are the stock ones.
+	 *
+	 * Stock debounces for only 3 ms, but the domes chatter for up to ~35 ms
+	 * after first contact (measured), producing double presses.
+	 */
+	keypad {
+		compatible = "gpio-matrix-keypad";
+
+		pinctrl-0 = <&matrix_keypad_row_default>, <&matrix_keypad_col_default>;
+		pinctrl-names = "default";
+
+		debounce-delay-ms = <30>;
+		col-scan-delay-us = <5>;
+		wakeup-source;
+
+		row-gpios = <&tlmm 126 GPIO_ACTIVE_HIGH>,
+			    <&tlmm 127 GPIO_ACTIVE_HIGH>,
+			    <&tlmm 45 GPIO_ACTIVE_HIGH>,
+			    <&tlmm 97 GPIO_ACTIVE_HIGH>,
+			    <&tlmm 62 GPIO_ACTIVE_HIGH>;
+
+		col-gpios = <&tlmm 96 GPIO_ACTIVE_HIGH>,
+			    <&tlmm 99 GPIO_ACTIVE_HIGH>,
+			    <&tlmm 90 GPIO_ACTIVE_HIGH>,
+			    <&tlmm 89 GPIO_ACTIVE_HIGH>,
+			    <&tlmm 129 GPIO_ACTIVE_HIGH>;
+
+		linux,keymap = <
+			MATRIX_KEY(0, 0, KEY_PHONE)
+			MATRIX_KEY(0, 1, KEY_3)
+			MATRIX_KEY(0, 2, KEY_6)
+			MATRIX_KEY(0, 3, KEY_9)
+			MATRIX_KEY(0, 4, KEY_NUMERIC_POUND)
+
+			MATRIX_KEY(1, 0, KEY_LEFT)
+			MATRIX_KEY(1, 1, KEY_2)
+			MATRIX_KEY(1, 2, KEY_5)
+			MATRIX_KEY(1, 3, KEY_8)
+			MATRIX_KEY(1, 4, KEY_0)
+
+			MATRIX_KEY(2, 0, KEY_MICMUTE)
+			MATRIX_KEY(2, 1, KEY_1)
+			MATRIX_KEY(2, 2, KEY_4)
+			MATRIX_KEY(2, 3, KEY_7)
+			MATRIX_KEY(2, 4, KEY_NUMERIC_STAR)
+
+			MATRIX_KEY(3, 0, KEY_ENTER)
+			MATRIX_KEY(3, 1, KEY_RIGHT)
+			MATRIX_KEY(3, 2, KEY_BACKSPACE)
+			MATRIX_KEY(3, 3, KEY_UP)
+			MATRIX_KEY(3, 4, KEY_DOWN)
+
+			MATRIX_KEY(4, 0, KEY_BACK)
+			MATRIX_KEY(4, 1, KEY_APPSELECT)
+			MATRIX_KEY(4, 2, KEY_HOMEPAGE)
+			MATRIX_KEY(4, 3, KEY_NUMERIC_B)
+			MATRIX_KEY(4, 4, KEY_NUMERIC_A)
+		>;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		pinctrl-0 = <&keypad_backlight_default>;
+		pinctrl-names = "default";
+
+		led-0 {
+			function = LED_FUNCTION_KBD_BACKLIGHT;
+			color = <LED_COLOR_ID_WHITE>;
+			gpios = <&tlmm 130 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+	};
+};
+
+&bam_dmux {
+	status = "okay";
+};
+
+&bam_dmux_dma {
+	status = "okay";
+};
+
+&blsp1_uart2 {
+	status = "okay";
+};
+
+&blsp2_i2c1 {
+	status = "okay";
+
+	/* 0x34: Awinic AW88194A speaker amplifier, no mainline driver yet */
+
+	typec@60 {
+		compatible = "willsemi,wusb3801";
+		reg = <0x60>;
+		interrupts-extended = <&tlmm 17 IRQ_TYPE_LEVEL_LOW>;
+
+		pinctrl-0 = <&typec_int_default>;
+		pinctrl-names = "default";
+
+		connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			/* Sink only until the OTG VBUS supply is identified */
+			power-role = "sink";
+			data-role = "device";
+			typec-power-opmode = "default";
+			pd-disable;
+		};
+	};
+};
+
+/* DSI panel (Sitronix ST7701S) driver not written yet; rely on lk2nd's framebuffer */
+&mdss_dsi0 {
+	status = "disabled";
+};
+
+&mdss_dsi0_phy {
+	status = "disabled";
+};
+
+&mba_mem {
+	status = "okay";
+};
+
+&modem {
+	firmware-name = "qcom/qm215/cat/s22flip/mba.mbn",
+			"qcom/qm215/cat/s22flip/modem.mbn";
+	status = "okay";
+};
+
+/* Stock modem_region: 0x86800000, size 0x5500000 */
+&mpss_mem {
+	reg = <0x0 0x86800000 0x0 0x5500000>;
+	status = "okay";
+};
+
+&pm8916_bms {
+	monitored-battery = <&bat>;
+	power-supplies = <&pm8916_charger>;
+	status = "okay";
+};
+
+/* Stock: vddmax/vddsafe 4325 mV, ibatsafe 1400 mA */
+&pm8916_charger {
+	qcom,fast-charge-safe-current = <1400000>;
+	qcom,fast-charge-safe-voltage = <4325000>;
+
+	monitored-battery = <&bat>;
+
+	status = "okay";
+};
+
+&pm8916_pwrkey {
+	linux,code = <KEY_POWER>;
+};
+
+&pm8916_resin {
+	linux,code = <KEY_VOLUMEDOWN>;
+	status = "okay";
+};
+
+&pm8916_vib {
+	status = "okay";
+};
+
+&sdhc_1 {
+	status = "okay";
+};
+
+&sdhc_2 {
+	pinctrl-0 = <&sdc2_default &sdc2_cd_default>;
+	pinctrl-1 = <&sdc2_sleep &sdc2_cd_default>;
+	pinctrl-names = "default", "sleep";
+
+	cd-gpios = <&tlmm 67 GPIO_ACTIVE_HIGH>;
+
+	status = "okay";
+};
+
+&sleep_clk {
+	clock-frequency = <32768>;
+};
+
+&usb {
+	extcon = <&pm8916_charger>;
+	status = "okay";
+};
+
+&usb_hs_phy {
+	status = "okay";
+};
+
+&wcnss {
+	firmware-name = "qcom/qm215/cat/s22flip/wcnss.mbn";
+	status = "okay";
+};
+
+&wcnss_ctrl {
+	firmware-name = "qcom/qm215/cat/s22flip/WCNSS_qcom_wlan_nv.bin";
+};
+
+/* dmesg "IRIS Reg: 91100004" -> chip id 0x9110 (WCN3610V1) */
+&wcnss_iris {
+	compatible = "qcom,wcn3610";
+	status = "okay";
+};
+
+&wcnss_mem {
+	status = "okay";
+};
+
+&smd_rpm_regulators {
+	vdd_l1_l2_l3-supply = <&pm8916_s3>;
+	vdd_l4_l5_l6-supply = <&pm8916_s4>;
+	vdd_l7-supply = <&pm8916_s4>;
+
+	s3 {
+		regulator-min-microvolt = <1200000>;
+		regulator-max-microvolt = <1200000>;
+	};
+
+	s4 {
+		regulator-min-microvolt = <2050000>;
+		regulator-max-microvolt = <2050000>;
+	};
+
+	l1 {
+		regulator-min-microvolt = <968000>;
+		regulator-max-microvolt = <1152000>;
+	};
+
+	l3 {
+		regulator-min-microvolt = <1325000>;
+		regulator-max-microvolt = <1325000>;
+	};
+
+	l4 {
+		regulator-min-microvolt = <1744000>;
+		regulator-max-microvolt = <1896000>;
+	};
+
+	l5 {
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+	};
+
+	l6 {
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+	};
+
+	l7 {
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+	};
+
+	/* eMMC vcc */
+	l8 {
+		regulator-min-microvolt = <2900000>;
+		regulator-max-microvolt = <2900000>;
+	};
+
+	/* WCN3610 vddpa */
+	l9 {
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+	};
+
+	l10 {
+		regulator-min-microvolt = <2704000>;
+		regulator-max-microvolt = <2850000>;
+	};
+
+	/* microSD vcc */
+	l11 {
+		regulator-min-microvolt = <2950000>;
+		regulator-max-microvolt = <2950000>;
+		regulator-system-load = <200000>;
+		regulator-allow-set-load;
+	};
+
+	/* microSD vccq, 1.8 V for UHS */
+	l12 {
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <2950000>;
+	};
+
+	l13 {
+		regulator-min-microvolt = <3075000>;
+		regulator-max-microvolt = <3075000>;
+	};
+
+	l14 {
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <3056000>;
+	};
+
+	l15 {
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <3056000>;
+	};
+
+	l16 {
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+	};
+
+	/* Outer display vdd is 2.85 V on stock */
+	l17 {
+		regulator-min-microvolt = <2850000>;
+		regulator-max-microvolt = <2850000>;
+	};
+
+	l18 {
+		regulator-min-microvolt = <2600000>;
+		regulator-max-microvolt = <2800000>;
+	};
+};
+
+&tlmm {
+	gpio_keys_default: gpio-keys-default-state {
+		pins = "gpio91";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	keypad_backlight_default: keypad-backlight-default-state {
+		pins = "gpio130";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	lid_switch_default: lid-switch-default-state {
+		pins = "gpio44";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	matrix_keypad_col_default: matrix-keypad-col-default-state {
+		pins = "gpio96", "gpio99", "gpio90", "gpio89", "gpio129";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	matrix_keypad_row_default: matrix-keypad-row-default-state {
+		pins = "gpio126", "gpio127", "gpio45", "gpio97", "gpio62";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	sdc2_cd_default: sdc2-cd-default-state {
+		pins = "gpio67";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	typec_int_default: typec-int-default-state {
+		pins = "gpio17";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+};
+
+&xo_board {
+	clock-frequency = <19200000>;
+};
