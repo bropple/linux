@@ -72,6 +72,7 @@ properties:
   compatible:
     items:
       - enum:
+          - cat,s22flip-ext-panel
           - saef,sftc154b
           - sainsmart18
           - shineworld,lh133k
