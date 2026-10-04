@@ -39,7 +39,10 @@ properties:
 
   awinic,dev-name:
     $ref: /schemas/types.yaml#/definitions/string
-    description: Device name of the ACF register profile, default aw88194
+    enum: [ aw88194, aw88194A ]
+    description:
+      Use this variant's ACF profiles instead of detecting the variant from
+      the DSP product ID when the first stream starts.
 
 required:
   - compatible

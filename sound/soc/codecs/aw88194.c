@@ -3,13 +3,14 @@
  * Awinic AW88194 smart audio amplifier
  *
  * Settings come from the vendor's ACF container (the aw881xx_acf.bin that
- * the downstream aw881xx driver loads): the register table of the selected
+ * the downstream aw881xx driver loads): the register table of the "Music"
  * profile, plus the firmware and configuration of the on-chip speaker
  * protection DSP.
  *
- * The DSP is bypassed unless the "dsp" module parameter is set: loading it
- * works and it starts executing, but its watchdog and speaker model never
- * come up the way they do under the vendor driver, so it is experimental.
+ * The container has profiles for two variants, AW88194 and AW88194A, which
+ * share a chip ID. The register product ID cannot tell them apart; the DSP's
+ * own product ID can, but it only reads back with the PLL running, so the
+ * variant is checked when the first stream starts.
  */
 
 #include <linux/bitfield.h>
@@ -69,6 +70,7 @@
 #define AW88194_MAX_REG			0x7f
 
 /* DSP memory map */
+#define AW88194_DSP_PID			0x1f80
 #define AW88194_DSP_CFG_ADDR		0x8600
 #define AW88194_DSP_FW_ADDR		0x8c00
 #define AW88194_DSP_VCALB		0x866d
@@ -80,9 +82,9 @@
 /* Default when unprotected (DSP bypassed): at least 12 dB of attenuation */
 #define AW88194_VOL_BYPASS_MIN		24
 
-static bool dsp;
+static bool dsp = true;
 module_param(dsp, bool, 0444);
-MODULE_PARM_DESC(dsp, "Load and run the speaker protection DSP (experimental)");
+MODULE_PARM_DESC(dsp, "Run the speaker protection DSP (default: true)");
 
 /* ACF container, header version 1.0.0.0 */
 #define AW88194_ACF_HDR_V1		0x01000000
@@ -129,17 +131,34 @@ struct aw88194_blob {
 	unsigned int len;
 };
 
-struct aw88194 {
-	struct device *dev;
-	struct regmap *regmap;
-	struct gpio_desc *reset;
+struct aw88194_profile {
+	const char *name;
 	struct aw88194_reg *init;
 	unsigned int num_init;
 	struct aw88194_blob dsp_fw;
 	struct aw88194_blob dsp_cfg;
-	bool dsp;		/* DSP loaded and in use */
 	unsigned int sysctrl;	/* SYSCTRL from the profile, powered down */
 	unsigned int pwmctrl;	/* PWMCTRL from the profile, muted */
+	unsigned int vol;	/* attenuation in 0.5 dB steps */
+};
+
+static const struct {
+	const char *name;
+	u16 dsp_pid;
+} aw88194_variants[] = {
+	{ "aw88194", 0x0000 },
+	{ "aw88194A", 0x6e90 },
+};
+
+struct aw88194 {
+	struct device *dev;
+	struct regmap *regmap;
+	struct gpio_desc *reset;
+	struct aw88194_profile prof[ARRAY_SIZE(aw88194_variants)];
+	struct aw88194_profile *cur;
+	bool detect;		/* check the DSP product ID at the next start */
+	bool dsp;		/* DSP in use */
+	bool dsp_loaded;	/* DSP firmware of the current profile loaded */
 	unsigned int vol;	/* attenuation in 0.5 dB steps */
 };
 
@@ -206,16 +225,16 @@ static int aw88194_copy_blob(struct aw88194 *aw, struct aw88194_blob *blob,
 	return 0;
 }
 
-static int aw88194_copy_regs(struct aw88194 *aw, const u8 *data, u32 size)
+static int aw88194_copy_regs(struct aw88194 *aw, struct aw88194_profile *p,
+			     const u8 *data, u32 size)
 {
 	unsigned int i;
 
 	if (size % 4)
 		return -EINVAL;
 
-	aw->init = devm_kcalloc(aw->dev, size / 4, sizeof(*aw->init),
-				GFP_KERNEL);
-	if (!aw->init)
+	p->init = devm_kcalloc(aw->dev, size / 4, sizeof(*p->init), GFP_KERNEL);
+	if (!p->init)
 		return -ENOMEM;
 
 	/* Pairs of little-endian 16-bit address and value */
@@ -228,27 +247,28 @@ static int aw88194_copy_regs(struct aw88194 *aw, const u8 *data, u32 size)
 
 		switch (reg) {
 		case AW88194_SYSCTRL:
-			aw->sysctrl = val;
+			p->sysctrl = val;
 			continue;
 		case AW88194_PWMCTRL:
-			aw->pwmctrl = val;
+			p->pwmctrl = val;
 			continue;
 		case AW88194_HAGCCFG6:
-			aw->vol = aw88194_reg_to_vol(
+			p->vol = aw88194_reg_to_vol(
 				FIELD_GET(AW88194_HAGCCFG6_VOL, val));
 			break;
 		}
 
-		aw->init[aw->num_init].reg = reg;
-		aw->init[aw->num_init].val = val;
-		aw->num_init++;
+		p->init[p->num_init].reg = reg;
+		p->init[p->num_init].val = val;
+		p->num_init++;
 	}
 
 	return 0;
 }
 
+/* Fill @p from the sections for @p->name; -ENOENT if it has no registers */
 static int aw88194_load_profile(struct aw88194 *aw, const struct firmware *fw,
-				const char *dev_name, const char *profile)
+				struct aw88194_profile *p, const char *profile)
 {
 	const struct aw88194_acf_hdr *hdr = (const void *)fw->data;
 	const struct aw88194_acf_dde *dde;
@@ -274,7 +294,7 @@ static int aw88194_load_profile(struct aw88194 *aw, const struct firmware *fw,
 		u32 data = le32_to_cpu(dde->data_offset);
 
 		if (le32_to_cpu(dde->chip_id) != AW88194_CHIP_ID ||
-		    strncmp(dde->dev_name, dev_name, sizeof(dde->dev_name)) ||
+		    strncmp(dde->dev_name, p->name, sizeof(dde->dev_name)) ||
 		    strncmp(dde->dev_profile_str, profile,
 			    sizeof(dde->dev_profile_str)))
 			continue;
@@ -286,14 +306,14 @@ static int aw88194_load_profile(struct aw88194 *aw, const struct firmware *fw,
 
 		switch (le32_to_cpu(dde->data_type)) {
 		case AW88194_ACF_DATA_REG:
-			ret = aw88194_copy_regs(aw, fw->data + data, size);
+			ret = aw88194_copy_regs(aw, p, fw->data + data, size);
 			break;
 		case AW88194_ACF_DATA_DSP_CFG:
-			ret = aw88194_copy_blob(aw, &aw->dsp_cfg,
+			ret = aw88194_copy_blob(aw, &p->dsp_cfg,
 						fw->data + data, size);
 			break;
 		case AW88194_ACF_DATA_DSP_FW:
-			ret = aw88194_copy_blob(aw, &aw->dsp_fw,
+			ret = aw88194_copy_blob(aw, &p->dsp_fw,
 						fw->data + data, size);
 			break;
 		default:
@@ -306,23 +326,14 @@ static int aw88194_load_profile(struct aw88194 *aw, const struct firmware *fw,
 		}
 	}
 
-	if (!aw->num_init) {
-		dev_err(aw->dev, "no register profile for %s/%s\n",
-			dev_name, profile);
+	if (!p->num_init)
 		return -ENOENT;
-	}
 
-	aw->dsp = dsp && aw->dsp_fw.len && aw->dsp_cfg.len;
-	if (!aw->dsp)
-		aw->vol = max(aw->vol, AW88194_VOL_BYPASS_MIN);
+	/* Powered down, DSP bypassed and muted until a stream starts */
+	p->sysctrl |= AW88194_SYSCTRL_I2SEN | AW88194_SYSCTRL_DSPBY |
+		      AW88194_SYSCTRL_AMPPD | AW88194_SYSCTRL_PWDN;
+	p->pwmctrl |= AW88194_PWMCTRL_HMUTE;
 
-	/* Powered down and muted until a stream starts */
-	aw->sysctrl |= AW88194_SYSCTRL_I2SEN | AW88194_SYSCTRL_AMPPD |
-		       AW88194_SYSCTRL_PWDN;
-	aw->pwmctrl |= AW88194_PWMCTRL_HMUTE;
-
-	dev_info(aw->dev, "%s/%s: %u registers, DSP %s\n", dev_name, profile,
-		 aw->num_init, aw->dsp ? "firmware loaded" : "bypassed");
 	return 0;
 }
 
@@ -356,6 +367,7 @@ static int aw88194_set_vcalb(struct aw88194 *aw)
  */
 static int aw88194_dsp_load(struct aw88194 *aw)
 {
+	const struct aw88194_profile *p = aw->cur;
 	unsigned int i, val;
 	int ret;
 
@@ -369,69 +381,79 @@ static int aw88194_dsp_load(struct aw88194 *aw)
 	if (ret)
 		return ret;
 
-	ret = aw88194_dsp_write(aw, AW88194_DSP_FW_ADDR, aw->dsp_fw.words,
-				aw->dsp_fw.len);
+	ret = aw88194_dsp_write(aw, AW88194_DSP_FW_ADDR, p->dsp_fw.words,
+				p->dsp_fw.len);
 	if (!ret)
 		ret = aw88194_dsp_write(aw, AW88194_DSP_CFG_ADDR,
-					aw->dsp_cfg.words, aw->dsp_cfg.len);
+					p->dsp_cfg.words, p->dsp_cfg.len);
 	if (!ret)
 		ret = aw88194_set_vcalb(aw);
 
 	/* Replay DSP memory writes from the register table, in order */
-	for (i = 0; !ret && i < aw->num_init; i++)
-		if (aw->init[i].reg == AW88194_DSPMADD ||
-		    aw->init[i].reg == AW88194_DSPMDAT)
-			ret = regmap_write(aw->regmap, aw->init[i].reg,
-					   aw->init[i].val);
+	for (i = 0; !ret && i < p->num_init; i++)
+		if (p->init[i].reg == AW88194_DSPMADD ||
+		    p->init[i].reg == AW88194_DSPMDAT)
+			ret = regmap_write(aw->regmap, p->init[i].reg,
+					   p->init[i].val);
 
 	/* Spot check that the memory took the data */
 	if (!ret)
 		ret = aw88194_dsp_read(aw, AW88194_DSP_FW_ADDR, &val);
-	if (!ret && val != aw->dsp_fw.words[0]) {
+	if (!ret && val != p->dsp_fw.words[0]) {
 		dev_err(aw->dev, "DSP memory readback %#06x, expected %#06x\n",
-			val, aw->dsp_fw.words[0]);
+			val, p->dsp_fw.words[0]);
 		ret = -EIO;
 	}
 
 	regmap_update_bits(aw->regmap, AW88194_SYSCTRL2,
 			   AW88194_SYSCTRL2_MEMCLK_PLL,
 			   AW88194_SYSCTRL2_MEMCLK_PLL);
+	aw->dsp_loaded = !ret;
 	return ret;
 }
 
-static int aw88194_hw_init(struct aw88194 *aw)
+/* Write the current profile's register table, except SYSCTRL and PWMCTRL */
+static int aw88194_write_regs(struct aw88194 *aw)
 {
+	const struct aw88194_profile *p = aw->cur;
 	unsigned int i;
 	int ret;
 
 	/* Interrupts stay masked; nothing handles them */
-	for (i = 0; i < aw->num_init; i++) {
-		unsigned int val = aw->init[i].val;
+	for (i = 0; i < p->num_init; i++) {
+		unsigned int val = p->init[i].val;
 
-		if (aw->init[i].reg == AW88194_SYSINTM)
+		if (p->init[i].reg == AW88194_SYSINTM)
 			val = AW88194_SYSINTM_ALL;
 
-		ret = regmap_write(aw->regmap, aw->init[i].reg, val);
+		ret = regmap_write(aw->regmap, p->init[i].reg, val);
 		if (ret)
 			return ret;
 	}
 
-	ret = regmap_update_bits(aw->regmap, AW88194_HAGCCFG6,
-				 AW88194_HAGCCFG6_VOL,
-				 FIELD_PREP(AW88194_HAGCCFG6_VOL,
-					    aw88194_vol_to_reg(aw->vol)));
+	/* The volume control, not the profile, sets the volume */
+	return regmap_update_bits(aw->regmap, AW88194_HAGCCFG6,
+				  AW88194_HAGCCFG6_VOL,
+				  FIELD_PREP(AW88194_HAGCCFG6_VOL,
+					     aw88194_vol_to_reg(aw->vol)));
+}
+
+static int aw88194_hw_init(struct aw88194 *aw)
+{
+	const struct aw88194_profile *p = aw->cur;
+	int ret;
+
+	ret = aw88194_write_regs(aw);
+	if (!ret)
+		ret = regmap_write(aw->regmap, AW88194_PWMCTRL, p->pwmctrl);
 	if (ret)
 		return ret;
 
-	ret = regmap_write(aw->regmap, AW88194_PWMCTRL, aw->pwmctrl);
-	if (ret)
-		return ret;
-
-	if (aw->dsp) {
-		/* Out of power-down, amplifier still off, DSP bypassed */
+	/* With the variant still to be checked, the DSP loads on first start */
+	if (aw->dsp && !aw->detect) {
+		/* Out of power-down for the oscillator, amplifier off */
 		ret = regmap_write(aw->regmap, AW88194_SYSCTRL,
-				   (aw->sysctrl & ~AW88194_SYSCTRL_PWDN) |
-				   AW88194_SYSCTRL_DSPBY);
+				   p->sysctrl & ~AW88194_SYSCTRL_PWDN);
 		if (ret)
 			return ret;
 
@@ -444,14 +466,65 @@ static int aw88194_hw_init(struct aw88194 *aw)
 		}
 	}
 
-	if (aw->dsp)
-		aw->sysctrl &= ~AW88194_SYSCTRL_DSPBY;
-	else
-		aw->sysctrl |= AW88194_SYSCTRL_DSPBY;
+	return regmap_write(aw->regmap, AW88194_SYSCTRL, p->sysctrl);
+}
 
-	/* The DSP stays bypassed until the amplifier is running */
-	return regmap_write(aw->regmap, AW88194_SYSCTRL,
-			    aw->sysctrl | AW88194_SYSCTRL_DSPBY);
+/*
+ * Switch to the profile matching the DSP's product ID. Called with the PLL
+ * locked and the amplifier still off.
+ */
+static int aw88194_detect_variant(struct aw88194 *aw)
+{
+	struct aw88194_profile *p = NULL;
+	unsigned int pid, i2sctrl, i;
+	int ret;
+
+	ret = aw88194_dsp_read(aw, AW88194_DSP_PID, &pid);
+	if (ret)
+		return ret;
+
+	aw->detect = false;
+	for (i = 0; i < ARRAY_SIZE(aw88194_variants); i++)
+		if (pid == aw88194_variants[i].dsp_pid && aw->prof[i].num_init)
+			p = &aw->prof[i];
+
+	if (!p) {
+		dev_warn(aw->dev, "unknown DSP product ID %#06x, keeping %s\n",
+			 pid, aw->cur->name);
+	} else if (p != aw->cur) {
+		dev_info(aw->dev, "DSP product ID %#06x: using %s\n", pid, p->name);
+		aw->cur = p;
+		aw->dsp_loaded = false;
+
+		/* New register table, keeping the stream format and power state */
+		ret = regmap_read(aw->regmap, AW88194_I2SCTRL, &i2sctrl);
+		if (!ret)
+			ret = aw88194_write_regs(aw);
+		if (!ret)
+			ret = regmap_write(aw->regmap, AW88194_I2SCTRL, i2sctrl);
+		if (!ret)
+			ret = regmap_write(aw->regmap, AW88194_PWMCTRL, p->pwmctrl);
+		if (!ret)
+			ret = regmap_update_bits(aw->regmap, AW88194_SYSCTRL,
+						 ~(AW88194_SYSCTRL_DSPBY |
+						   AW88194_SYSCTRL_AMPPD |
+						   AW88194_SYSCTRL_PWDN) & 0xffff,
+						 p->sysctrl);
+		if (ret)
+			return ret;
+	}
+
+	aw->dsp = dsp && aw->cur->dsp_fw.len && aw->cur->dsp_cfg.len;
+	if (aw->dsp && !aw->dsp_loaded) {
+		ret = aw88194_dsp_load(aw);
+		if (ret) {
+			dev_warn(aw->dev, "DSP load failed (%d), bypassing it\n",
+				 ret);
+			aw->dsp = false;
+		}
+	}
+
+	return 0;
 }
 
 /* Start the DSP and check that its watchdog sees it running */
@@ -507,6 +580,12 @@ static int aw88194_power_up(struct aw88194 *aw)
 	if (ret) {
 		dev_err(aw->dev, "PLL not locked (SYSST %#06x)\n", val);
 		goto err_pwdn;
+	}
+
+	if (aw->detect) {
+		ret = aw88194_detect_variant(aw);
+		if (ret)
+			goto err_pwdn;
 	}
 
 	/* Boost and class D */
@@ -712,11 +791,11 @@ static int aw88194_probe(struct i2c_client *i2c)
 {
 	struct device *dev = &i2c->dev;
 	const char *fw_name = "aw881xx_acf.bin";
-	const char *dev_name;
+	const char *dev_name = NULL;
 	const struct firmware *fw;
+	unsigned int id, val, sysctrl, pwmctrl, i, found = 0;
 	struct aw88194 *aw;
-	unsigned int id, val;
-	int ret;
+	int ret = 0;
 
 	aw = devm_kzalloc(dev, sizeof(*aw), GFP_KERNEL);
 	if (!aw)
@@ -747,33 +826,60 @@ static int aw88194_probe(struct i2c_client *i2c)
 	if (id != AW88194_CHIP_ID)
 		return dev_err_probe(dev, -ENODEV, "unknown chip ID %#06x\n", id);
 
-	/* Start from the reset values in case the profile omits these */
-	ret = regmap_read(aw->regmap, AW88194_SYSCTRL, &aw->sysctrl);
+	/* Start from the reset values in case a profile omits these */
+	ret = regmap_read(aw->regmap, AW88194_SYSCTRL, &sysctrl);
 	if (!ret)
-		ret = regmap_read(aw->regmap, AW88194_PWMCTRL, &aw->pwmctrl);
+		ret = regmap_read(aw->regmap, AW88194_PWMCTRL, &pwmctrl);
 	if (!ret)
 		ret = regmap_read(aw->regmap, AW88194_HAGCCFG6, &val);
 	if (!ret)
 		ret = regmap_read(aw->regmap, AW88194_PRODUCT_ID, &id);
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to read defaults\n");
-	aw->vol = aw88194_reg_to_vol(FIELD_GET(AW88194_HAGCCFG6_VOL, val));
-
-	/* Product ID 1 is the AW88194, anything else the AW88194A */
-	dev_name = FIELD_GET(AW88194_PRODUCT_ID_PID, id) == 1 ?
-		   "aw88194" : "aw88194A";
 
 	device_property_read_string(dev, "firmware-name", &fw_name);
+	/* A fixed variant skips the DSP product ID check */
 	device_property_read_string(dev, "awinic,dev-name", &dev_name);
 
 	ret = request_firmware(&fw, fw_name, dev);
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to load %s\n", fw_name);
 
-	ret = aw88194_load_profile(aw, fw, dev_name, "Music");
+	for (i = 0; i < ARRAY_SIZE(aw88194_variants); i++) {
+		struct aw88194_profile *p = &aw->prof[i];
+
+		p->name = aw88194_variants[i].name;
+		if (dev_name && strcmp(dev_name, p->name))
+			continue;
+
+		p->sysctrl = sysctrl;
+		p->pwmctrl = pwmctrl;
+		p->vol = aw88194_reg_to_vol(FIELD_GET(AW88194_HAGCCFG6_VOL, val));
+		ret = aw88194_load_profile(aw, fw, p, "Music");
+		if (ret == -ENOENT)
+			continue;
+		if (ret)
+			break;
+		found++;
+		/* Until the DSP says otherwise: product ID 1 is the AW88194 */
+		if (!aw->cur || (i == 0) == (FIELD_GET(AW88194_PRODUCT_ID_PID, id) == 1))
+			aw->cur = p;
+	}
 	release_firmware(fw);
-	if (ret)
+	if (ret && ret != -ENOENT)
 		return ret;
+	if (!found)
+		return dev_err_probe(dev, -ENOENT, "no profile in %s\n", fw_name);
+
+	aw->detect = !dev_name && found > 1;
+	aw->dsp = dsp && aw->cur->dsp_fw.len && aw->cur->dsp_cfg.len;
+	aw->vol = aw->cur->vol;
+	if (!dsp)
+		aw->vol = max(aw->vol, AW88194_VOL_BYPASS_MIN);
+
+	dev_info(dev, "%s profile%s, DSP %s\n", aw->cur->name,
+		 aw->detect ? " (variant checked at first start)" : "",
+		 dsp ? "enabled" : "bypassed");
 
 	ret = aw88194_hw_init(aw);
 	if (ret)
