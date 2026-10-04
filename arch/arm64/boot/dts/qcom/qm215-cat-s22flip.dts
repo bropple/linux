@@ -209,7 +209,17 @@
 
 	status = "okay";
 
-	/* 0x34: Awinic AW88194A speaker amplifier, no mainline driver yet */
+	speaker_amp: audio-amplifier@34 {
+		compatible = "awinic,aw88194";
+		reg = <0x34>;
+		reset-gpios = <&tlmm 66 GPIO_ACTIVE_LOW>;
+		firmware-name = "qcom/qm215/cat/s22flip/aw881xx_acf.bin";
+		sound-name-prefix = "Speaker";
+		#sound-dai-cells = <0>;
+
+		pinctrl-0 = <&speaker_amp_default>;
+		pinctrl-names = "default";
+	};
 
 	typec@60 {
 		compatible = "willsemi,wusb3801";
@@ -467,8 +477,8 @@
 		"MM_DL4", "MultiMedia4 Playback",
 		"MultiMedia2 Capture", "MM_UL2";
 
-	pinctrl-0 = <&cdc_pdm_default>;
-	pinctrl-1 = <&cdc_pdm_sleep>;
+	pinctrl-0 = <&cdc_pdm_default>, <&quin_mi2s_default>;
+	pinctrl-1 = <&cdc_pdm_sleep>, <&quin_mi2s_sleep>;
 	pinctrl-names = "default", "sleep";
 
 	status = "okay";
@@ -518,6 +528,22 @@
 
 		codec {
 			sound-dai = <&lpass_codec 0>, <&pm8916_codec 0>;
+		};
+	};
+
+	quinary-mi2s-dai-link {
+		link-name = "Quinary MI2S";
+
+		cpu {
+			sound-dai = <&q6afedai QUINARY_MI2S_RX>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+
+		codec {
+			sound-dai = <&speaker_amp>;
 		};
 	};
 
@@ -777,11 +803,51 @@
 		bias-disable;
 	};
 
+	/* Quinary MI2S goes out on the pri_mi2s pins (selected by quin-iomux) */
+	quin_mi2s_default: quin-mi2s-default-state {
+		clk-data-pins {
+			pins = "gpio85", "gpio86", "gpio88";
+			function = "pri_mi2s";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		ws-pins {
+			pins = "gpio87";
+			function = "pri_mi2s_ws";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	quin_mi2s_sleep: quin-mi2s-sleep-state {
+		clk-data-pins {
+			pins = "gpio85", "gpio86", "gpio88";
+			function = "pri_mi2s";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+
+		ws-pins {
+			pins = "gpio87";
+			function = "pri_mi2s_ws";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+
 	sdc2_cd_default: sdc2-cd-default-state {
 		pins = "gpio67";
 		function = "gpio";
 		drive-strength = <2>;
 		bias-pull-up;
+	};
+
+	speaker_amp_default: speaker-amp-default-state {
+		pins = "gpio66";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
 	};
 
 	typec_int_default: typec-int-default-state {
