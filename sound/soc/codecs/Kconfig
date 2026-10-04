@@ -700,6 +700,15 @@ config SND_SOC_AW88261
 	  boost converter can be adjusted smartly according to
 	  the input amplitude.
 
+config SND_SOC_AW88194
+	tristate "Soc Audio for awinic aw88194"
+	depends on I2C
+	select REGMAP_I2C
+	help
+	  This option enables support for the Awinic AW88194 smart amplifier,
+	  configured from the vendor's aw881xx ACF register profile with the
+	  speaker protection DSP bypassed.
+
 config SND_SOC_AW88081
 	tristate "Soc Audio for awinic aw88081/aw88083"
 	depends on I2C
