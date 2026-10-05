@@ -538,6 +538,16 @@ static int dpu_encoder_phys_vid_wait_for_commit_done(
 	if (!hw_ctl)
 		return 0;
 
+	/*
+	 * Nothing is in flight on an encoder that is not enabled. The wait
+	 * for the previous commit at the start of a commit that switches the
+	 * CRTC on already sees the new, active state; if MDSS kept its
+	 * registers while off, the CTL still holds the flush written after
+	 * the timing engine stopped, which can never latch.
+	 */
+	if (phys_enc->enable_state == DPU_ENC_DISABLED)
+		return 0;
+
 	ret = wait_event_timeout(phys_enc->pending_kickoff_wq,
 		(hw_ctl->ops.get_flush_register(hw_ctl) == 0),
 		msecs_to_jiffies(50));
