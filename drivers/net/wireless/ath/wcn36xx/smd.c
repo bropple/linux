@@ -124,7 +124,12 @@ static struct wcn36xx_cfg_val wcn3610_cfg_vals[] = {
 	WCN36XX_CFG_VAL(TX_PWR_CTRL_ENABLE, 1),
 	WCN36XX_CFG_VAL(ENABLE_CLOSE_LOOP, 1),
 	WCN36XX_CFG_VAL(ENABLE_LPWR_IMG_TRANSITION, 0),
-	WCN36XX_CFG_VAL(BTC_EXECUTION_MODE, 2),
+	/*
+	 * 0 = smart coexistence, prima's default. 2 (PTA only) let any WiFi
+	 * traffic break up Bluetooth A2DP audio; 0 keeps A2DP smooth during
+	 * downloads with no loss of WiFi throughput (Cat S22 Flip).
+	 */
+	WCN36XX_CFG_VAL(BTC_EXECUTION_MODE, 0),
 	WCN36XX_CFG_VAL(BTC_STATIC_OPP_WLAN_ACTIVE_WLAN_LEN, 90000),
 	WCN36XX_CFG_VAL(BTC_STATIC_OPP_WLAN_ACTIVE_BT_LEN, 60000),
 	WCN36XX_CFG_VAL(BTC_STATIC_OPP_WLAN_IDLE_WLAN_LEN, 30000),
@@ -664,6 +669,15 @@ static int wcn36xx_smd_start_rsp(struct wcn36xx *wcn, void *buf, size_t len)
 	return 0;
 }
 
+/*
+ * Bluetooth coexistence execution mode sent at firmware start, overriding
+ * the chip's table (prima's BtcExecutionMode: 0 smart, 1 WLAN only, 2 PTA
+ * only, 3 smart/WLAN-weighted, 4 smart/BT-weighted, 5 smart/A2DP-weighted).
+ */
+static int btc_mode = -1;
+module_param(btc_mode, int, 0644);
+MODULE_PARM_DESC(btc_mode, "Bluetooth coexistence execution mode (0-5), -1 = default for the chip");
+
 int wcn36xx_smd_start(struct wcn36xx *wcn)
 {
 	struct wcn36xx_hal_mac_start_req_msg msg_body, *body;
@@ -696,8 +710,12 @@ int wcn36xx_smd_start(struct wcn36xx *wcn)
 	}
 
 	for (i = 0; i < cfg_elements; i++) {
-		ret = put_cfg_tlv_u32(wcn, &len, cfg_vals[i].cfg_id,
-				      cfg_vals[i].value);
+		u32 value = cfg_vals[i].value;
+
+		if (cfg_vals[i].cfg_id == WCN36XX_HAL_CFG_BTC_EXECUTION_MODE &&
+		    btc_mode >= 0 && btc_mode <= 5)
+			value = btc_mode;
+		ret = put_cfg_tlv_u32(wcn, &len, cfg_vals[i].cfg_id, value);
 		if (ret)
 			goto out;
 	}
