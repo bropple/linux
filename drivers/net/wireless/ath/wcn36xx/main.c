@@ -729,20 +729,18 @@ static void wcn36xx_update_allowed_rates(struct ieee80211_sta *sta,
 	rates_table = sta_priv->supported_rates.dsss_rates;
 	if (band == NL80211_BAND_2GHZ) {
 		for (i = 0; i < size; i++) {
-			if (rates & 0x01) {
+			if (rates & 0x01)
 				rates_table[i] = wcn_2ghz_rates[i].hw_value;
-				rates = rates >> 1;
-			}
+			rates = rates >> 1;
 		}
 	}
 
 	size = ARRAY_SIZE(sta_priv->supported_rates.ofdm_rates);
 	rates_table = sta_priv->supported_rates.ofdm_rates;
 	for (i = 0; i < size; i++) {
-		if (rates & 0x01) {
+		if (rates & 0x01)
 			rates_table[i] = wcn_5ghz_rates[i].hw_value;
-			rates = rates >> 1;
-		}
+		rates = rates >> 1;
 	}
 
 	if (sta->deflink.ht_cap.ht_supported) {
