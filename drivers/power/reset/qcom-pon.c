@@ -13,6 +13,14 @@
 #include <linux/regmap.h>
 
 #define PON_SOFT_RB_SPARE		0x8f
+/*
+ * Spare byte that survives a reset but that the stock Qualcomm bootloader
+ * neither reads nor scrubs (it scrubs SOFT_RB_SPARE's reason bits). Our
+ * lk2nd checks it for LK2ND_FASTBOOT_MAGIC, clears it and stays in its
+ * fastboot: a one-shot "next boot: lk2nd fastboot" switch.
+ */
+#define PON_DVDD_RB_SPARE		0x8d
+#define LK2ND_FASTBOOT_MAGIC		0x6c	/* 'l' */
 
 #define GEN1_REASON_SHIFT		2
 #define GEN2_REASON_SHIFT		1
@@ -43,6 +51,39 @@ static int qcom_pon_reboot_mode_write(struct reboot_mode_driver *reboot,
 
 	return ret;
 }
+
+static ssize_t lk2nd_fastboot_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct qcom_pon *pon = dev_get_drvdata(dev);
+	unsigned int val;
+	int ret;
+
+	ret = regmap_read(pon->regmap, pon->baseaddr + PON_DVDD_RB_SPARE, &val);
+	if (ret)
+		return ret;
+
+	return sysfs_emit(buf, "%d\n", val == LK2ND_FASTBOOT_MAGIC);
+}
+
+static ssize_t lk2nd_fastboot_store(struct device *dev,
+				    struct device_attribute *attr,
+				    const char *buf, size_t count)
+{
+	struct qcom_pon *pon = dev_get_drvdata(dev);
+	bool on;
+	int ret;
+
+	ret = kstrtobool(buf, &on);
+	if (ret)
+		return ret;
+
+	ret = regmap_write(pon->regmap, pon->baseaddr + PON_DVDD_RB_SPARE,
+			   on ? LK2ND_FASTBOOT_MAGIC : 0);
+
+	return ret ? ret : count;
+}
+static DEVICE_ATTR_RW(lk2nd_fastboot);
 
 static int qcom_pon_probe(struct platform_device *pdev)
 {
@@ -81,6 +122,24 @@ static int qcom_pon_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, pon);
+
+	if (reason_shift == GEN1_REASON_SHIFT) {
+		unsigned int val;
+
+		/* One-shot: never let the lk2nd switch outlive a boot */
+		if (!regmap_read(pon->regmap,
+				 pon->baseaddr + PON_DVDD_RB_SPARE, &val) &&
+		    val == LK2ND_FASTBOOT_MAGIC) {
+			dev_info(&pdev->dev, "lk2nd fastboot switch was set; cleared\n");
+			regmap_write(pon->regmap,
+				     pon->baseaddr + PON_DVDD_RB_SPARE, 0);
+		}
+
+		error = device_create_file(&pdev->dev, &dev_attr_lk2nd_fastboot);
+		if (error)
+			dev_warn(&pdev->dev, "no lk2nd_fastboot attribute: %d\n",
+				 error);
+	}
 
 	return devm_of_platform_populate(&pdev->dev);
 }
