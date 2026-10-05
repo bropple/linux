@@ -573,6 +573,18 @@
 	status = "okay";
 };
 
+/*
+ * No Venus firmware or venus_mem carve-out yet, so its probe fails, and a
+ * consumer that never probes keeps GCC's sync_state() pending forever.
+ * Until then genpd keeps every GCC domain that was on at boot powered,
+ * which is mdss_gdsc (the bootloader's splash): the display block never
+ * power-collapses with the lid closed, and DPU registers survive a
+ * display off/on (stale CTL flush and reset state on re-enable).
+ */
+&venus {
+	status = "disabled";
+};
+
 &wcnss {
 	firmware-name = "qcom/qm215/cat/s22flip/wcnss.mbn";
 	status = "okay";
