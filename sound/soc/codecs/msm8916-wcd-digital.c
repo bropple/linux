@@ -10,6 +10,7 @@
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
+#include <linux/workqueue.h>
 #include <linux/mfd/syscon.h>
 #include <sound/soc.h>
 #include <sound/pcm.h>
@@ -226,6 +227,10 @@ struct wcd_iir_filter_ctl {
 
 struct msm8916_wcd_digital_priv {
 	struct clk *ahbclk, *mclk;
+	struct regmap *regmap;
+	struct snd_soc_component *component;
+	struct delayed_work idle_work;
+	bool mclk_on;
 };
 
 static const unsigned long rx_gain_reg[] = {
@@ -844,8 +849,49 @@ static int msm8916_wcd_digital_component_probe(struct snd_soc_component *compone
 	struct msm8916_wcd_digital_priv *priv = dev_get_drvdata(component->dev);
 
 	snd_soc_component_set_drvdata(component, priv);
+	priv->component = component;
+
+	/*
+	 * DAPM starts at bias OFF and only calls set_bias_level() on a
+	 * change, so the clock probe left on would never be dropped. Drop it
+	 * once the card is set up (its register reads are then cached), if
+	 * the codec is still idle by then.
+	 */
+	schedule_delayed_work(&priv->idle_work, msecs_to_jiffies(5000));
 
 	return 0;
+}
+
+static void msm8916_wcd_digital_component_remove(struct snd_soc_component *component)
+{
+	struct msm8916_wcd_digital_priv *priv = dev_get_drvdata(component->dev);
+
+	cancel_delayed_work_sync(&priv->idle_work);
+}
+
+static void msm8916_wcd_digital_idle_work(struct work_struct *work)
+{
+	struct msm8916_wcd_digital_priv *priv =
+		container_of(work, struct msm8916_wcd_digital_priv, idle_work.work);
+	struct snd_soc_dapm_context *dapm =
+		snd_soc_component_to_dapm(priv->component);
+
+	snd_soc_dapm_mutex_lock(dapm);
+	if (priv->mclk_on &&
+	    snd_soc_dapm_get_bias_level(dapm) == SND_SOC_BIAS_OFF) {
+		unsigned int reg, val;
+
+		/*
+		 * Fill the cache with every register while the clock is still
+		 * on: with it off, a read of an uncached register fails.
+		 */
+		for (reg = 0; reg <= LPASS_CDC_TX2_DMIC_CTL; reg += 4)
+			regmap_read(priv->regmap, reg, &val);
+		regcache_cache_only(priv->regmap, true);
+		clk_disable_unprepare(priv->mclk);
+		priv->mclk_on = false;
+	}
+	snd_soc_dapm_mutex_unlock(dapm);
 }
 
 static int msm8916_wcd_digital_component_set_sysclk(struct snd_soc_component *component,
@@ -1141,8 +1187,52 @@ static struct snd_soc_dai_driver msm8916_wcd_digital_dai[] = {
 	       },
 };
 
+/*
+ * MCLK is the LPASS digital codec core clock, provided by the ADSP: while it
+ * is on, the ADSP cannot power collapse and the SoC never reaches XO
+ * shutdown or VDD minimization. Keep it on only while the codec is in use:
+ * with the bias OFF, register access goes to the cache, and is replayed when
+ * the clock comes back.
+ */
+static int msm8916_wcd_digital_set_bias_level(struct snd_soc_component *component,
+					      enum snd_soc_bias_level level)
+{
+	struct msm8916_wcd_digital_priv *priv = dev_get_drvdata(component->dev);
+	int ret;
+
+	switch (level) {
+	case SND_SOC_BIAS_STANDBY:
+		if (priv->mclk_on)
+			break;
+		ret = clk_prepare_enable(priv->mclk);
+		if (ret) {
+			dev_err(component->dev, "failed to enable mclk %d\n", ret);
+			return ret;
+		}
+		priv->mclk_on = true;
+		regcache_cache_only(priv->regmap, false);
+		ret = regcache_sync(priv->regmap);
+		if (ret)
+			dev_err(component->dev, "register sync failed %d\n", ret);
+		break;
+	case SND_SOC_BIAS_OFF:
+		if (!priv->mclk_on)
+			break;
+		regcache_cache_only(priv->regmap, true);
+		clk_disable_unprepare(priv->mclk);
+		priv->mclk_on = false;
+		break;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
 static const struct snd_soc_component_driver msm8916_wcd_digital = {
 	.probe			= msm8916_wcd_digital_component_probe,
+	.remove			= msm8916_wcd_digital_component_remove,
+	.set_bias_level		= msm8916_wcd_digital_set_bias_level,
 	.set_sysclk		= msm8916_wcd_digital_component_set_sysclk,
 	.controls		= msm8916_wcd_digital_snd_controls,
 	.num_controls		= ARRAY_SIZE(msm8916_wcd_digital_snd_controls),
@@ -1150,7 +1240,6 @@ static const struct snd_soc_component_driver msm8916_wcd_digital = {
 	.num_dapm_widgets	= ARRAY_SIZE(msm8916_wcd_digital_dapm_widgets),
 	.dapm_routes		= msm8916_wcd_digital_audio_map,
 	.num_dapm_routes	= ARRAY_SIZE(msm8916_wcd_digital_audio_map),
-	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
 };
@@ -1160,7 +1249,8 @@ static const struct regmap_config msm8916_codec_regmap_config = {
 	.reg_stride = 4,
 	.val_bits = 32,
 	.max_register = LPASS_CDC_TX2_DMIC_CTL,
-	.cache_type = REGCACHE_FLAT,
+	/* Only registers the driver touched: they are what a resync writes */
+	.cache_type = REGCACHE_MAPLE,
 };
 
 static int msm8916_wcd_digital_probe(struct platform_device *pdev)
@@ -1195,11 +1285,15 @@ static int msm8916_wcd_digital_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	/* On for the component probe; set_bias_level() takes over from there */
 	ret = clk_prepare_enable(priv->mclk);
 	if (ret < 0) {
 		dev_err(dev, "failed to enable mclk %d\n", ret);
 		goto err_clk;
 	}
+	priv->mclk_on = true;
+	priv->regmap = digital_map;
+	INIT_DELAYED_WORK(&priv->idle_work, msm8916_wcd_digital_idle_work);
 
 	dev_set_drvdata(dev, priv);
 
@@ -1212,7 +1306,8 @@ static int msm8916_wcd_digital_probe(struct platform_device *pdev)
 	return 0;
 
 err_mclk:
-	clk_disable_unprepare(priv->mclk);
+	if (priv->mclk_on)
+		clk_disable_unprepare(priv->mclk);
 err_clk:
 	clk_disable_unprepare(priv->ahbclk);
 	return ret;
@@ -1222,7 +1317,8 @@ static void msm8916_wcd_digital_remove(struct platform_device *pdev)
 {
 	struct msm8916_wcd_digital_priv *priv = dev_get_drvdata(&pdev->dev);
 
-	clk_disable_unprepare(priv->mclk);
+	if (priv->mclk_on)
+		clk_disable_unprepare(priv->mclk);
 	clk_disable_unprepare(priv->ahbclk);
 }
 
