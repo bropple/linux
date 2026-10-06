@@ -216,6 +216,7 @@
 
 		cluster_pd: power-domain-cluster {
 			#power-domain-cells = <0>;
+			power-domains = <&mpm>;
 			domain-idle-states = <&cluster_pwrdn>;
 		};
 
@@ -246,6 +247,29 @@
 
 	rpm: remoteproc {
 		compatible = "qcom,msm8917-rpm-proc", "qcom,rpm-proc";
+
+		/*
+		 * The RPM's wake controller: in the cluster states that notify
+		 * RPM, the CPUs wake only for these pins and the MPM timer.
+		 * Pins from the downstream msm8937 tables (also used by
+		 * QM215/msm8917); pin 53 (MDSS there) is left to the TLMM,
+		 * whose GPIO 62 shares it.
+		 */
+		mpm: interrupt-controller {
+			compatible = "qcom,mpm";
+			qcom,rpm-msg-ram = <&apss_mpm>;
+			interrupts = <GIC_SPI 171 IRQ_TYPE_EDGE_RISING>;
+			mboxes = <&apcs 1>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			interrupt-parent = <&intc>;
+			qcom,mpm-pin-count = <64>;
+			qcom,mpm-pin-map = <2 184>,	/* tsens */
+					   <49 140>,	/* usb async */
+					   <58 134>,	/* usb */
+					   <62 190>;	/* spmi pmic arbiter */
+			#power-domain-cells = <0>;
+		};
 
 		smd-edge {
 			interrupts = <GIC_SPI 168 IRQ_TYPE_EDGE_RISING>;
@@ -516,6 +540,14 @@
 		rpm_msg_ram: sram@60000 {
 			compatible = "qcom,rpm-msg-ram";
 			reg = <0x00060000 0x8000>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges = <0 0x00060000 0x8000>;
+
+			/* vMPM: timer, then enable/edge/polarity/status x 2 */
+			apss_mpm: sram@1d0 {
+				reg = <0x1d0 0x30>;
+			};
 		};
 
 		usb_hs_phy: phy@6c000 {
@@ -716,6 +748,7 @@
 			compatible = "qcom,msm8917-pinctrl";
 			reg = <0x01000000 0x300000>;
 			interrupts = <GIC_SPI 208 IRQ_TYPE_LEVEL_HIGH>;
+			wakeup-parent = <&mpm>;
 			gpio-controller;
 			gpio-ranges = <&tlmm 0 0 134>;
 			#gpio-cells = <2>;
@@ -1539,7 +1572,7 @@
 				    "intr",
 				    "cnfg";
 			interrupt-names = "periph_irq";
-			interrupts = <GIC_SPI 190 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts-extended = <&mpm 62 IRQ_TYPE_LEVEL_HIGH>;
 			qcom,ee = <0>;
 			qcom,channel = <0>;
 			#address-cells = <2>;
