@@ -215,6 +215,25 @@
 	status = "okay";
 };
 
+&blsp1_i2c3 {
+	status = "okay";
+
+	/* Main display touchscreen; vdd L17 is shared with the main panel */
+	touchscreen@2e {
+		compatible = "chipsemi,chsc-ts";
+		reg = <0x2e>;
+		interrupts-extended = <&tlmm 65 IRQ_TYPE_EDGE_FALLING>;
+		reset-gpios = <&tlmm 64 GPIO_ACTIVE_LOW>;
+		vdd-supply = <&pm8916_l17>;
+		vio-supply = <&pm8916_l5>;
+		touchscreen-size-x = <480>;
+		touchscreen-size-y = <640>;
+
+		pinctrl-0 = <&ts_int_default>, <&ts_reset_default>;
+		pinctrl-names = "default";
+	};
+};
+
 &blsp1_uart2 {
 	status = "okay";
 };
@@ -889,6 +908,20 @@
 		function = "gpio";
 		drive-strength = <2>;
 		bias-disable;
+	};
+
+	ts_int_default: ts-int-default-state {
+		pins = "gpio65";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-up;
+	};
+
+	ts_reset_default: ts-reset-default-state {
+		pins = "gpio64";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-up;
 	};
 
 	typec_int_default: typec-int-default-state {
