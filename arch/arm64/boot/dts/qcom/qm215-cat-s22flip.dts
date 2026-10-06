@@ -82,6 +82,19 @@
 	 * Outer display backlight. Stock drives it with a pulse-count protocol
 	 * ("bl_gpio_pulse"); plain on/off is enough for now.
 	 */
+	/* 1.2 V for both cameras' digital cores, enabled by GPIO 25 */
+	camera_vdig: camera-vdig-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "camera_vdig";
+		regulator-min-microvolt = <1200000>;
+		regulator-max-microvolt = <1200000>;
+		gpio = <&tlmm 25 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+
+		pinctrl-0 = <&camera_vdig_default>;
+		pinctrl-names = "default";
+	};
+
 	ext_backlight: ext-backlight {
 		compatible = "gpio-backlight";
 		gpios = <&tlmm 12 GPIO_ACTIVE_HIGH>;
@@ -89,6 +102,22 @@
 
 		pinctrl-0 = <&ext_backlight_default>;
 		pinctrl-names = "default";
+	};
+
+	/* Rear camera flash: stock "qm215-gpio-flash", enable 33, flash 34 */
+	flash-led-controller {
+		compatible = "sgmicro,sgm3140";
+		enable-gpios = <&tlmm 33 GPIO_ACTIVE_HIGH>;
+		flash-gpios = <&tlmm 34 GPIO_ACTIVE_HIGH>;
+
+		pinctrl-0 = <&camera_flash_default>;
+		pinctrl-names = "default";
+
+		camera_flash: led {
+			function = LED_FUNCTION_FLASH;
+			color = <LED_COLOR_ID_WHITE>;
+			flash-max-timeout-us = <250000>;
+		};
 	};
 
 	gpio-keys {
@@ -320,6 +349,69 @@
 			vsync-len = <0>;
 			clock-frequency = <(130 * 131 * 30)>;
 		};
+	};
+};
+
+&camss {
+	status = "okay";
+
+	ports {
+		port@0 {
+			reg = <0>;
+
+			/* Lanes as on the Nokia 2780 (same SoC and sensor) */
+			csiphy0_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1>;
+				link-frequencies = /bits/ 64 <438000000>;
+				remote-endpoint = <&rear_camera_ep>;
+			};
+		};
+	};
+};
+
+&cci {
+	status = "okay";
+};
+
+&cci_i2c0 {
+	/* Rear: GC5035, 5 MP, two lanes on CSIPHY0, mounted at 90 degrees */
+	camera@3f {
+		compatible = "galaxycore,gc5035";
+		reg = <0x3f>;
+
+		resetb-gpios = <&tlmm 36 GPIO_ACTIVE_LOW>;
+		pwdn-gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
+
+		clocks = <&gcc GCC_CAMSS_MCLK0_CLK>;
+		clock-names = "mclk";
+		clock-frequency = <24000000>;
+
+		iovdd-supply = <&pm8916_l6>;
+		avdd28-supply = <&pm8916_l16>;
+		dvdd12-supply = <&camera_vdig>;
+
+		lens-focus = <&rear_camera_vcm>;
+		flash-leds = <&camera_flash>;
+		orientation = <1>;
+		rotation = <90>;
+
+		pinctrl-0 = <&rear_camera_default>;
+		pinctrl-names = "default";
+
+		port {
+			rear_camera_ep: endpoint {
+				data-lanes = <0 1>;
+				link-frequencies = /bits/ 64 <438000000>;
+				remote-endpoint = <&csiphy0_ep>;
+			};
+		};
+	};
+
+	rear_camera_vcm: camera-lens@c {
+		compatible = "dongwoon,dw9714";
+		reg = <0x0c>;
+		vcc-supply = <&pm8916_l10>;
 	};
 };
 
@@ -761,6 +853,20 @@
 };
 
 &tlmm {
+	camera_flash_default: camera-flash-default-state {
+		pins = "gpio33", "gpio34";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	camera_vdig_default: camera-vdig-default-state {
+		pins = "gpio25";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
 	cdc_pdm_default: cdc-pdm-default-state {
 		pins = "gpio69", "gpio70", "gpio71", "gpio72", "gpio73", "gpio74";
 		function = "cdc_pdm0";
@@ -893,6 +999,22 @@
 			function = "pri_mi2s_ws";
 			drive-strength = <2>;
 			bias-pull-down;
+		};
+	};
+
+	rear_camera_default: rear-camera-default-state {
+		mclk-pins {
+			pins = "gpio26";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		ctrl-pins {
+			pins = "gpio35", "gpio36";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
 		};
 	};
 
