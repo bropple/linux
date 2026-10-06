@@ -12,6 +12,7 @@
 #include <linux/irqchip.h>
 #include <linux/irqdomain.h>
 #include <linux/mailbox_client.h>
+#include <linux/math64.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -21,6 +22,8 @@
 #include <linux/slab.h>
 #include <linux/soc/qcom/irq.h>
 #include <linux/spinlock.h>
+
+#include <clocksource/arm_arch_timer.h>
 
 /*
  * This is the driver for Qualcomm MPM (MSM Power Manager) interrupt controller,
@@ -292,6 +295,43 @@ static irqreturn_t qcom_mpm_handler(int irq, void *dev_id)
 	return ret;
 }
 
+/*
+ * Tell RPM when to wake the AP: the earliest next timer of the domains below
+ * the MPM (the CPU cluster), as an absolute arch timer count in TIMER0/1. In
+ * the cluster states that notify RPM, the CPUs wake only for MPM pins and
+ * this timer; without it, kernel timers stop firing while every other
+ * subsystem sleeps. ~0 means no timer.
+ */
+static void mpm_set_wakeup_timer(struct qcom_mpm_priv *priv)
+{
+	ktime_t next = KTIME_MAX;
+	struct gpd_link *link;
+	u64 ticks = U64_MAX;
+
+	list_for_each_entry(link, &priv->genpd.parent_links, parent_node) {
+		struct generic_pm_domain *child = link->child;
+		ktime_t t;
+
+		if (!child->gd)
+			continue;
+		t = READ_ONCE(child->gd->next_hrtimer);
+		if (ktime_before(t, next))
+			next = t;
+	}
+
+	if (next != KTIME_MAX) {
+		s64 delta = ktime_to_ns(ktime_sub(next, ktime_get()));
+
+		ticks = arch_timer_read_counter();
+		if (delta > 0)
+			ticks += mul_u64_u32_div(delta, arch_timer_get_rate(),
+						 NSEC_PER_SEC);
+	}
+
+	writel_relaxed(lower_32_bits(ticks), priv->base);
+	writel_relaxed(upper_32_bits(ticks), priv->base + 4);
+}
+
 static int mpm_pd_power_off(struct generic_pm_domain *genpd)
 {
 	struct qcom_mpm_priv *priv = container_of(genpd, struct qcom_mpm_priv,
@@ -300,6 +340,8 @@ static int mpm_pd_power_off(struct generic_pm_domain *genpd)
 
 	for (i = 0; i < priv->reg_stride; i++)
 		qcom_mpm_write(priv, MPM_REG_STATUS, i, 0);
+
+	mpm_set_wakeup_timer(priv);
 
 	/* Notify RPM to write vMPM into HW */
 	ret = mbox_send_message(priv->mbox_chan, NULL);
