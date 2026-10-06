@@ -15,6 +15,7 @@
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/leds/common.h>
 #include <dt-bindings/pinctrl/qcom,pmic-mpp.h>
+#include <dt-bindings/sound/qcom,q6voice.h>
 
 / {
 	model = "Cat S22 Flip";
@@ -519,6 +520,19 @@
 
 		cpu {
 			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA3>;
+		};
+	};
+
+	/*
+	 * Voice calls (VoLTE): the modem's voice session on the ADSP. Opening
+	 * this hostless 8 kHz PCM starts the session; the audio itself flows
+	 * modem -> ADSP -> codec. As on the Nokia 2780 (same SoC).
+	 */
+	voicemmode1-dai-link {
+		link-name = "VoiceMMode1";
+
+		cpu {
+			sound-dai = <&q6voicedai VOICEMMODE1>;
 		};
 	};
 
