@@ -428,6 +428,9 @@ deinit:
  * to register cpuidle driver then rollback to cancel all CPUs
  * registration.
  */
+static struct faux_device *psci_idle_fdev;
+static int psci_idle_probe_err;
+
 static int psci_cpuidle_probe(struct faux_device *fdev)
 {
 	int cpu, ret;
@@ -445,6 +448,7 @@ static int psci_cpuidle_probe(struct faux_device *fdev)
 	return 0;
 
 out_fail:
+	psci_idle_probe_err = ret;
 	while (--cpu >= 0) {
 		dev = per_cpu(cpuidle_devices, cpu);
 		drv = cpuidle_get_cpu_driver(dev);
@@ -474,15 +478,33 @@ static bool __init dt_idle_state_present(void)
 	return !!of_match_node(psci_idle_state_match, state_node);
 }
 
+/*
+ * The CPU PM domains can come up after psci_idle_init(): their parent may be
+ * a power domain that probes late, such as the Qualcomm MPM. The faux device
+ * probes only once, so try again when the domains are there.
+ */
+void psci_idle_domains_ready(void)
+{
+	if (psci_idle_fdev || psci_idle_probe_err != -EPROBE_DEFER)
+		return;
+
+	psci_idle_probe_err = 0;
+	psci_idle_fdev = faux_device_create("psci-cpuidle", NULL, &psci_cpuidle_ops);
+	if (!psci_idle_fdev)
+		pr_err("Failed to create psci-cpuidle device\n");
+}
+
 static int __init psci_idle_init(void)
 {
-	struct faux_device *fdev;
-
 	if (!dt_idle_state_present())
 		return 0;
 
-	fdev = faux_device_create("psci-cpuidle", NULL, &psci_cpuidle_ops);
-	if (!fdev) {
+	psci_idle_fdev = faux_device_create("psci-cpuidle", NULL, &psci_cpuidle_ops);
+	if (!psci_idle_fdev) {
+		if (psci_idle_probe_err == -EPROBE_DEFER) {
+			pr_info("waiting for the CPU PM domains\n");
+			return 0;
+		}
 		pr_err("Failed to create psci-cpuidle device\n");
 		return -ENODEV;
 	}

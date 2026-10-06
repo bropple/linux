@@ -174,6 +174,7 @@ static int psci_cpuidle_domain_probe(struct platform_device *pdev)
 			use_osi ? "OSI" : "PC");
 	}
 
+	psci_idle_domains_ready();
 	return 0;
 
 remove_pd:
