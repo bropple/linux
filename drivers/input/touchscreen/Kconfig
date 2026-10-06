@@ -210,6 +210,19 @@ config TOUCHSCREEN_CHIPONE_ICN8505
 	  To compile this driver as a module, choose M here: the
 	  module will be called chipone_icn8505.
 
+config TOUCHSCREEN_CHIPSEMI_CHSC
+	tristate "Chipsemi CHSC touchscreen controllers"
+	depends on I2C
+	select REGMAP_I2C
+	help
+	  Say Y here if you have a Chipsemi CHSC capacitive touchscreen
+	  ("semi_touch" protocol), as in the Cat S22 Flip.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called chipsemi-chsc.
+
 config TOUCHSCREEN_CY8CTMA140
 	tristate "cy8ctma140 touchscreen"
 	depends on I2C
