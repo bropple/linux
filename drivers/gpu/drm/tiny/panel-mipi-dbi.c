@@ -285,9 +285,32 @@ out_exit:
 	drm_dev_exit(idx);
 }
 
+static void panel_mipi_dbi_crtc_helper_atomic_disable(struct drm_crtc *crtc,
+						      struct drm_atomic_state *state)
+{
+	struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(crtc->dev);
+	int idx;
+
+	/*
+	 * Turn the panel off and put it to sleep: its supplies may be shared
+	 * and stay on, and a running panel with only the backlight off still
+	 * shows its image in ambient light. The next enable resets the panel
+	 * and runs the init commands again (sleep out, display on).
+	 */
+	if (drm_dev_enter(crtc->dev, &idx)) {
+		mipi_dbi_command(&dbidev->dbi, MIPI_DCS_SET_DISPLAY_OFF);
+		mipi_dbi_command(&dbidev->dbi, MIPI_DCS_ENTER_SLEEP_MODE);
+		drm_dev_exit(idx);
+	}
+
+	drm_mipi_dbi_crtc_helper_atomic_disable(crtc, state);
+}
+
 static const struct drm_crtc_helper_funcs panel_mipi_dbi_crtc_helper_funcs = {
-	DRM_MIPI_DBI_CRTC_HELPER_FUNCS,
+	.mode_valid = drm_mipi_dbi_crtc_helper_mode_valid,
+	.atomic_check = drm_mipi_dbi_crtc_helper_atomic_check,
 	.atomic_enable = panel_mipi_dbi_crtc_helper_atomic_enable,
+	.atomic_disable = panel_mipi_dbi_crtc_helper_atomic_disable,
 };
 
 static const struct drm_crtc_funcs panel_mipi_dbi_crtc_funcs = {
