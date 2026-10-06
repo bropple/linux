@@ -21,6 +21,21 @@
 	compatible = "cat,s22flip", "qcom,qm215", "qcom,msm8917";
 	chassis-type = "handset";
 
+	reserved-memory {
+		/*
+		 * The kernel log survives a warm reset here (pstore):
+		 * /sys/fs/pstore after the next boot. High in RAM, away
+		 * from where the bootloaders load anything.
+		 */
+		ramoops@bff00000 {
+			compatible = "ramoops";
+			reg = <0x0 0xbff00000 0x0 0x100000>;
+			record-size = <0x20000>;
+			console-size = <0x40000>;
+			pmsg-size = <0x20000>;
+		};
+	};
+
 	aliases {
 		mmc0 = &sdhc_1;
 		mmc1 = &sdhc_2;
