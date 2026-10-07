@@ -124,6 +124,22 @@
 				min-residency-us = <6000>;
 				local-timer-stop;
 			};
+
+			/*
+			 * L2 power collapse with RPM notification (downstream
+			 * "l2-pc", cluster psci-mode 5, qcom,notify-rpm): the
+			 * only cluster state that lets the RPM enter XO shutdown
+			 * and VDD minimization. Latency as downstream (11.2 ms).
+			 */
+			cluster_pc_rpm: cluster-sleep-1 {
+				compatible = "domain-idle-state";
+				idle-state-name = "cluster-sleep-1";
+				arm,psci-suspend-param = <0x41000053>;
+				entry-latency-us = <2000>;
+				exit-latency-us = <9200>;
+				min-residency-us = <20000>;
+				local-timer-stop;
+			};
 		};
 
 		idle-states {
@@ -217,7 +233,7 @@
 		cluster_pd: power-domain-cluster {
 			#power-domain-cells = <0>;
 			power-domains = <&mpm>;
-			domain-idle-states = <&cluster_pwrdn>;
+			domain-idle-states = <&cluster_pwrdn>, <&cluster_pc_rpm>;
 		};
 
 		cpu_pd0: power-domain-cpu0 {
