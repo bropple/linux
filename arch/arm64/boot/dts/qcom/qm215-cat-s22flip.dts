@@ -479,6 +479,22 @@
 	status = "okay";
 };
 
+&gpu_opp_table {
+	/*
+	 * This QM215 is fused as GPU speed bin 3 (QFPROM 0xa0164, bits 10:9):
+	 * 400 MHz at most. At 484.8-598 MHz the GPU locked up under load.
+	 */
+	/delete-node/ opp-484800000;
+	/delete-node/ opp-523200000;
+	/delete-node/ opp-598000000;
+	/*
+	 * devfreq parks the idle GPU at the lowest level, and at 19.2 MHz the
+	 * first heavy frame after idle outlasts hangcheck: a GPU reset for
+	 * nothing. 270 MHz is the floor.
+	 */
+	/delete-node/ opp-19200000;
+};
+
 &lpass_codec {
 	status = "okay";
 };
