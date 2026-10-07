@@ -869,9 +869,11 @@ static int spi_qup_io_config(struct spi_device *spi, struct spi_transfer *xfer)
 	return 0;
 }
 
-static int spi_qup_transfer_one(struct spi_controller *host,
-			      struct spi_device *spi,
-			      struct spi_transfer *xfer)
+static int spi_qup_hw_init(struct spi_qup *controller);
+
+static int spi_qup_transfer_once(struct spi_controller *host,
+				 struct spi_device *spi,
+				 struct spi_transfer *xfer)
 {
 	struct spi_qup *controller = spi_controller_get_devdata(host);
 	unsigned long timeout, flags;
@@ -909,6 +911,51 @@ static int spi_qup_transfer_one(struct spi_controller *host,
 	if (ret && spi_qup_is_dma_xfer(controller->mode))
 		spi_qup_dma_terminate(host, xfer);
 
+	return ret;
+}
+
+/*
+ * A controller that stops completing transfers stays stuck until it is
+ * reset: on the Cat S22 Flip's outer display (BLSP2 QUP2) the first panel
+ * enable after boot timed out, and so did every transfer after it, until
+ * the driver was bound again. Do what a new probe does, cycle the clocks,
+ * reset and set the controller up again, and retry the transfer once.
+ */
+static void spi_qup_recover(struct spi_controller *host)
+{
+	struct spi_qup *controller = spi_controller_get_devdata(host);
+
+	if (!IS_ERR_OR_NULL(host->dma_tx))
+		dmaengine_terminate_sync(host->dma_tx);
+	if (!IS_ERR_OR_NULL(host->dma_rx))
+		dmaengine_terminate_sync(host->dma_rx);
+
+	clk_disable_unprepare(controller->cclk);
+	clk_disable_unprepare(controller->iclk);
+	if (clk_prepare_enable(controller->iclk) ||
+	    clk_prepare_enable(controller->cclk))
+		dev_err(controller->dev, "clocks did not come back after recovery\n");
+
+	if (spi_qup_hw_init(controller))
+		dev_err(controller->dev, "cannot set RESET state after recovery\n");
+}
+
+static int spi_qup_transfer_one(struct spi_controller *host,
+				struct spi_device *spi,
+				struct spi_transfer *xfer)
+{
+	struct spi_qup *controller = spi_controller_get_devdata(host);
+	int ret;
+
+	ret = spi_qup_transfer_once(host, spi, xfer);
+	if (ret != -ETIMEDOUT)
+		return ret;
+
+	dev_warn(controller->dev, "transfer timed out, resetting the controller\n");
+	spi_qup_recover(host);
+	ret = spi_qup_transfer_once(host, spi, xfer);
+	if (!ret)
+		dev_info(controller->dev, "transfer completed after the reset\n");
 	return ret;
 }
 
@@ -1020,6 +1067,39 @@ static void spi_qup_set_cs(struct spi_device *spi, bool val)
 
 	if (spi_ioc != spi_ioc_orig)
 		writel_relaxed(spi_ioc, controller->base + SPI_IO_CONTROL);
+}
+
+/* Software reset and the register setup the controller starts from */
+static int spi_qup_hw_init(struct spi_qup *controller)
+{
+	void __iomem *base = controller->base;
+	int ret;
+
+	writel_relaxed(1, base + QUP_SW_RESET);
+
+	ret = spi_qup_set_state(controller, QUP_STATE_RESET);
+	if (ret)
+		return ret;
+
+	writel_relaxed(0, base + QUP_OPERATIONAL);
+	writel_relaxed(0, base + QUP_IO_M_MODES);
+
+	if (!controller->qup_v1)
+		writel_relaxed(0, base + QUP_OPERATIONAL_MASK);
+
+	writel_relaxed(SPI_ERROR_CLK_UNDER_RUN | SPI_ERROR_CLK_OVER_RUN,
+		       base + SPI_ERROR_FLAGS_EN);
+
+	/* if earlier version of the QUP, disable INPUT_OVERRUN */
+	if (controller->qup_v1)
+		writel_relaxed(QUP_ERROR_OUTPUT_OVER_RUN |
+			QUP_ERROR_INPUT_UNDER_RUN | QUP_ERROR_OUTPUT_UNDER_RUN,
+			base + QUP_ERROR_FLAGS_EN);
+
+	writel_relaxed(0, base + SPI_CONFIG);
+	writel_relaxed(SPI_IO_C_NO_TRI_STATE, base + SPI_IO_CONTROL);
+
+	return 0;
 }
 
 static int spi_qup_probe(struct platform_device *pdev)
@@ -1160,31 +1240,11 @@ static int spi_qup_probe(struct platform_device *pdev)
 		 controller->in_blk_sz, controller->in_fifo_sz,
 		 controller->out_blk_sz, controller->out_fifo_sz);
 
-	writel_relaxed(1, base + QUP_SW_RESET);
-
-	ret = spi_qup_set_state(controller, QUP_STATE_RESET);
+	ret = spi_qup_hw_init(controller);
 	if (ret) {
 		dev_err(dev, "cannot set RESET state\n");
 		goto error_clk;
 	}
-
-	writel_relaxed(0, base + QUP_OPERATIONAL);
-	writel_relaxed(0, base + QUP_IO_M_MODES);
-
-	if (!controller->qup_v1)
-		writel_relaxed(0, base + QUP_OPERATIONAL_MASK);
-
-	writel_relaxed(SPI_ERROR_CLK_UNDER_RUN | SPI_ERROR_CLK_OVER_RUN,
-		       base + SPI_ERROR_FLAGS_EN);
-
-	/* if earlier version of the QUP, disable INPUT_OVERRUN */
-	if (controller->qup_v1)
-		writel_relaxed(QUP_ERROR_OUTPUT_OVER_RUN |
-			QUP_ERROR_INPUT_UNDER_RUN | QUP_ERROR_OUTPUT_UNDER_RUN,
-			base + QUP_ERROR_FLAGS_EN);
-
-	writel_relaxed(0, base + SPI_CONFIG);
-	writel_relaxed(SPI_IO_C_NO_TRI_STATE, base + SPI_IO_CONTROL);
 
 	ret = devm_request_irq(dev, irq, spi_qup_qup_irq,
 			       IRQF_TRIGGER_HIGH, pdev->name, controller);
