@@ -236,6 +236,9 @@ static void panel_mipi_dbi_commands_execute(struct mipi_dbi *dbi,
 struct panel_mipi_dbi_device {
 	struct mipi_dbi_dev dbidev;
 
+	/* Display on and backlight wait for the first frame after an enable */
+	bool reveal;
+
 	struct drm_plane plane;
 	struct drm_crtc crtc;
 	struct drm_encoder encoder;
@@ -251,8 +254,37 @@ static const u64 panel_mipi_dbi_plane_format_modifiers[] = {
 	DRM_MIPI_DBI_PLANE_FORMAT_MODIFIERS,
 };
 
+/*
+ * The panel shows its own frame memory as soon as it is on: after a while
+ * dark, the frame from before (at power-on, whatever the bootloader drew).
+ * The atomic helpers enable the CRTC before they update the plane, so the
+ * enable leaves the display off and the backlight dark, and the first plane
+ * update turns them on once the new frame is in the panel.
+ */
+static void panel_mipi_dbi_plane_helper_atomic_update(struct drm_plane *plane,
+						      struct drm_atomic_state *state)
+{
+	struct panel_mipi_dbi_device *panel_mipi_dbi = to_panel_mipi_dbi_device(plane->dev);
+	struct mipi_dbi_dev *dbidev = &panel_mipi_dbi->dbidev;
+	int idx;
+
+	drm_mipi_dbi_plane_helper_atomic_update(plane, state);
+
+	if (!panel_mipi_dbi->reveal || !plane->state->crtc ||
+	    !plane->state->crtc->state->active)
+		return;
+	panel_mipi_dbi->reveal = false;
+	if (drm_dev_enter(plane->dev, &idx)) {
+		mipi_dbi_command(&dbidev->dbi, MIPI_DCS_SET_DISPLAY_ON);
+		backlight_enable(dbidev->backlight);
+		drm_dev_exit(idx);
+	}
+}
+
 static const struct drm_plane_helper_funcs panel_mipi_dbi_plane_helper_funcs = {
-	DRM_MIPI_DBI_PLANE_HELPER_FUNCS,
+	DRM_GEM_SHADOW_PLANE_HELPER_FUNCS,
+	.atomic_check = drm_mipi_dbi_plane_helper_atomic_check,
+	.atomic_update = panel_mipi_dbi_plane_helper_atomic_update,
 };
 
 static const struct drm_plane_funcs panel_mipi_dbi_plane_funcs = {
@@ -280,7 +312,9 @@ static void panel_mipi_dbi_crtc_helper_atomic_enable(struct drm_crtc *crtc,
 	if (!ret)
 		panel_mipi_dbi_commands_execute(dbi, dbidev->driver_private);
 
-	backlight_enable(dbidev->backlight);
+	/* Dark until the first frame is in (see the plane update) */
+	mipi_dbi_command(dbi, MIPI_DCS_SET_DISPLAY_OFF);
+	panel_mipi_dbi->reveal = true;
 out_exit:
 	drm_dev_exit(idx);
 }
