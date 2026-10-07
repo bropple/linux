@@ -47,10 +47,30 @@
 
 /* Analog gain control */
 #define GC5035_REG_ANALOG_GAIN				0xb6
-#define GC5035_ANALOG_GAIN_MIN				0
-#define GC5035_ANALOG_GAIN_MAX				20
+/*
+ * Analogue gain is linear for userspace: 16 is 1x. The sensor takes a
+ * level 0-20 instead, whose real gains (measured on a Cat S22 Flip: fixed
+ * exposure, raw signal above black at each level) are below. Levels 8-11
+ * repeat 4-7 and are not used.
+ */
+#define GC5035_ANALOG_GAIN_ONE				16
+#define GC5035_ANALOG_GAIN_MIN				GC5035_ANALOG_GAIN_ONE
+#define GC5035_ANALOG_GAIN_MAX				182
 #define GC5035_ANALOG_GAIN_STEP				1
-#define GC5035_ANALOG_GAIN_DEFAULT			GC5035_ANALOG_GAIN_MIN
+#define GC5035_ANALOG_GAIN_DEFAULT			GC5035_ANALOG_GAIN_ONE
+
+#define GC5035_PIXEL_ARRAY_WIDTH			2592
+#define GC5035_PIXEL_ARRAY_HEIGHT			1944
+
+static const struct {
+	u8 level;
+	u16 gain;	/* x 1000 */
+} gc5035_again[] = {
+	{ 0, 1000 }, { 1, 1189 }, { 2, 1421 }, { 3, 1672 }, { 4, 1948 },
+	{ 5, 2290 }, { 6, 2720 }, { 7, 3169 }, { 12, 3672 }, { 13, 4245 },
+	{ 14, 4976 }, { 15, 5742 }, { 16, 6581 }, { 17, 7563 }, { 18, 8775 },
+	{ 19, 10026 }, { 20, 11388 },
+};
 
 /* Digital gain control */
 #define GC5035_REG_DIGI_GAIN_H				0xb1
@@ -1503,11 +1523,32 @@ static const struct v4l2_subdev_video_ops gc5035_video_ops = {
 	.s_stream = gc5035_s_stream,
 };
 
+/* Every mode reads (binned or cropped from) the whole array */
+static int gc5035_get_selection(struct v4l2_subdev *sd,
+				struct v4l2_subdev_state *state,
+				struct v4l2_subdev_selection *sel)
+{
+	switch (sel->target) {
+	case V4L2_SEL_TGT_CROP:
+	case V4L2_SEL_TGT_CROP_DEFAULT:
+	case V4L2_SEL_TGT_CROP_BOUNDS:
+	case V4L2_SEL_TGT_NATIVE_SIZE:
+		sel->r.left = 0;
+		sel->r.top = 0;
+		sel->r.width = GC5035_PIXEL_ARRAY_WIDTH;
+		sel->r.height = GC5035_PIXEL_ARRAY_HEIGHT;
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
 static const struct v4l2_subdev_pad_ops gc5035_pad_ops = {
 	.enum_mbus_code = gc5035_enum_mbus_code,
 	.enum_frame_size = gc5035_enum_frame_sizes,
 	.get_fmt = gc5035_get_fmt,
 	.set_fmt = gc5035_set_fmt,
+	.get_selection = gc5035_get_selection,
 };
 
 static const struct v4l2_subdev_internal_ops gc5035_internal_ops = {
@@ -1541,7 +1582,15 @@ static int gc5035_set_exposure(struct gc5035 *gc5035, int val)
 
 static int gc5035_set_analogue_gain(struct gc5035 *gc5035, int val)
 {
+	unsigned int want = val * 1000 / GC5035_ANALOG_GAIN_ONE, best = 0, i;
 	int ret;
+
+	/* The nearest level */
+	for (i = 1; i < ARRAY_SIZE(gc5035_again); i++)
+		if (abs((int)gc5035_again[i].gain - (int)want) <
+		    abs((int)gc5035_again[best].gain - (int)want))
+			best = i;
+	val = gc5035_again[best].level;
 
 	ret = gc5035_write_reg(gc5035, GC5035_PAGE_REG, 0);
 	if (ret)
@@ -1665,6 +1714,7 @@ static int gc5035_initialize_controls(struct gc5035 *gc5035)
 {
 	const struct gc5035_mode *mode;
 	struct v4l2_ctrl_handler *handler;
+	struct v4l2_fwnode_device_properties props;
 	struct v4l2_ctrl *ctrl;
 	u64 exposure_max, pixel_rate;
 	u32 h_blank, vblank_def;
@@ -1672,7 +1722,7 @@ static int gc5035_initialize_controls(struct gc5035 *gc5035)
 
 	handler = &gc5035->ctrl_handler;
 	mode = gc5035->cur_mode;
-	ret = v4l2_ctrl_handler_init(handler, 8);
+	ret = v4l2_ctrl_handler_init(handler, 10);
 	if (ret)
 		return ret;
 
@@ -1718,6 +1768,12 @@ static int gc5035_initialize_controls(struct gc5035 *gc5035)
 				     V4L2_CID_TEST_PATTERN,
 				     ARRAY_SIZE(gc5035_test_pattern_menu) - 1,
 				     0, 0, gc5035_test_pattern_menu);
+
+	/* Orientation and rotation from the firmware, for userspace */
+	ret = v4l2_fwnode_device_parse(&gc5035->client->dev, &props);
+	if (ret)
+		goto err_free_handler;
+	v4l2_ctrl_new_fwnode_properties(handler, &gc5035_ctrl_ops, &props);
 
 	if (handler->error) {
 		ret = handler->error;
