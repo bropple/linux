@@ -1997,7 +1997,7 @@
 		a53pll: clock@b016000 {
 			compatible = "qcom,msm8939-a53pll";
 			reg = <0x0b016000 0x40>;
-			clocks = <&rpmcc RPM_SMD_XO_A_CLK_SRC>;
+			clocks = <&xo_board>;
 			clock-names = "xo";
 			#clock-cells = <0>;
 			operating-points-v2 = <&pll_opp_table>;
