@@ -2107,7 +2107,7 @@
 
 			clocks = <&q6afecc LPASS_CLK_ID_INTERNAL_DIGITAL_CODEC_CORE
 					   LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
-				 <&rpmcc RPM_SMD_XO_CLK_SRC>;
+				 <&xo_board>;
 			clock-names = "mclk", "ahbix-clk";
 			assigned-clocks = <&q6afecc LPASS_CLK_ID_INTERNAL_DIGITAL_CODEC_CORE
 						    LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
