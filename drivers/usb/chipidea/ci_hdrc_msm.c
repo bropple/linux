@@ -189,7 +189,8 @@ static int ci_hdrc_msm_probe(struct platform_device *pdev)
 	ci->pdata.capoffset = DEF_CAPOFFSET;
 	ci->pdata.flags	= CI_HDRC_REGS_SHARED | CI_HDRC_DISABLE_STREAMING |
 			  CI_HDRC_OVERRIDE_AHB_BURST |
-			  CI_HDRC_OVERRIDE_PHY_CONTROL;
+			  CI_HDRC_OVERRIDE_PHY_CONTROL |
+			  CI_HDRC_SUPPORTS_RUNTIME_PM;
 	ci->pdata.notify_event = ci_hdrc_msm_notify_event;
 
 	reset = devm_reset_control_get(&pdev->dev, "core");
@@ -261,8 +262,13 @@ static int ci_hdrc_msm_probe(struct platform_device *pdev)
 
 	ci->ci = plat_ci;
 
+	/*
+	 * The core suspends at runtime while no cable is attached (it wakes
+	 * through the VBUS extcon), and this device, its parent, then gates
+	 * the controller's clocks: the system clock runs from GPLL0, whose
+	 * XO vote otherwise keeps the RPM from ever shutting XO down.
+	 */
 	pm_runtime_set_active(&pdev->dev);
-	pm_runtime_no_callbacks(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
 
 	return 0;
@@ -278,11 +284,45 @@ static void ci_hdrc_msm_remove(struct platform_device *pdev)
 {
 	struct ci_hdrc_msm *ci = platform_get_drvdata(pdev);
 
-	pm_runtime_disable(&pdev->dev);
 	ci_hdrc_remove_device(ci->ci);
+	pm_runtime_disable(&pdev->dev);
+	if (!pm_runtime_status_suspended(&pdev->dev)) {
+		clk_disable_unprepare(ci->iface_clk);
+		clk_disable_unprepare(ci->core_clk);
+	}
+	pm_runtime_set_suspended(&pdev->dev);
+}
+
+static int ci_hdrc_msm_runtime_suspend(struct device *dev)
+{
+	struct ci_hdrc_msm *ci = dev_get_drvdata(dev);
+
 	clk_disable_unprepare(ci->iface_clk);
 	clk_disable_unprepare(ci->core_clk);
+
+	return 0;
 }
+
+static int ci_hdrc_msm_runtime_resume(struct device *dev)
+{
+	struct ci_hdrc_msm *ci = dev_get_drvdata(dev);
+	int ret;
+
+	ret = clk_prepare_enable(ci->core_clk);
+	if (ret)
+		return ret;
+
+	ret = clk_prepare_enable(ci->iface_clk);
+	if (ret)
+		clk_disable_unprepare(ci->core_clk);
+
+	return ret;
+}
+
+static const struct dev_pm_ops ci_hdrc_msm_pm_ops = {
+	RUNTIME_PM_OPS(ci_hdrc_msm_runtime_suspend,
+		       ci_hdrc_msm_runtime_resume, NULL)
+};
 
 static const struct of_device_id msm_ci_dt_match[] = {
 	{ .compatible = "qcom,ci-hdrc", },
@@ -296,6 +336,7 @@ static struct platform_driver ci_hdrc_msm_driver = {
 	.driver = {
 		.name = "msm_hsusb",
 		.of_match_table = msm_ci_dt_match,
+		.pm = pm_ptr(&ci_hdrc_msm_pm_ops),
 	},
 };
 
