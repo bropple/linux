@@ -376,7 +376,7 @@
 
 &cci_i2c0 {
 	/*
-	 * Rear: GC5035, 5 MP, two lanes on CSIPHY0, mounted at 90 degrees.
+	 * Rear: GC5035, 5 MP, two lanes on CSIPHY0, mounted at 270 degrees.
 	 * Strapped to 0x37 (stock: slave address 0x6e), not the Nokia's 0x3f.
 	 */
 	camera@37 {
@@ -397,7 +397,7 @@
 		lens-focus = <&rear_camera_vcm>;
 		flash-leds = <&camera_flash>;
 		orientation = <1>;
-		rotation = <90>;
+		rotation = <270>;
 
 		pinctrl-0 = <&rear_camera_default>;
 		pinctrl-names = "default";
