@@ -446,7 +446,7 @@
 		dvdd-supply = <&camera_vdig>;
 
 		orientation = <0>;
-		rotation = <270>;
+		rotation = <90>;	/* stock says 270; measured */
 
 		pinctrl-0 = <&front_camera_default>;
 		pinctrl-names = "default";
