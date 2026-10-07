@@ -16,6 +16,7 @@
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pm_opp.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/pm_runtime.h>
 #include <linux/spi/spi.h>
 #include "internals.h"
@@ -925,6 +926,10 @@ static void spi_qup_recover(struct spi_controller *host)
 {
 	struct spi_qup *controller = spi_controller_get_devdata(host);
 
+	/* Pins taken over by someone else (see the runtime resume) */
+	pinctrl_pm_select_sleep_state(controller->dev);
+	pinctrl_pm_select_default_state(controller->dev);
+
 	if (!IS_ERR_OR_NULL(host->dma_tx))
 		dmaengine_terminate_sync(host->dma_tx);
 	if (!IS_ERR_OR_NULL(host->dma_rx))
@@ -1290,6 +1295,9 @@ static int spi_qup_pm_suspend_runtime(struct device *device)
 	spi_qup_vote_bw(controller, 0);
 	clk_disable_unprepare(controller->iclk);
 
+	/* Leave "default" so the next resume writes the pins again */
+	pinctrl_pm_select_sleep_state(device);
+
 	return 0;
 }
 
@@ -1299,6 +1307,16 @@ static int spi_qup_pm_resume_runtime(struct device *device)
 	struct spi_qup *controller = spi_controller_get_devdata(host);
 	u32 config;
 	int ret;
+
+	/*
+	 * The pins can be reconfigured behind our back: on the Cat S22 Flip
+	 * the ADSP's sensor framework parks GPIO 22/23 (this QUP's I2C pins,
+	 * our SPI chip select and clock) as GPIOs when its sensors go idle,
+	 * and every transfer then times out. Write them again on each resume.
+	 */
+	ret = pinctrl_pm_select_default_state(device);
+	if (ret)
+		return ret;
 
 	ret = clk_prepare_enable(controller->iclk);
 	if (ret)
