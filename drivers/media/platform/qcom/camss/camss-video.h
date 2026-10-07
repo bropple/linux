@@ -11,6 +11,7 @@
 #define QC_MSM_CAMSS_VIDEO_H
 
 #include <linux/mutex.h>
+#include <linux/pm_qos.h>
 #include <linux/videodev2.h>
 #include <media/media-entity.h>
 #include <media/v4l2-dev.h>
@@ -48,6 +49,7 @@ struct camss_video {
 	unsigned int line_based;
 	const struct camss_format_info *formats;
 	unsigned int nformats;
+	struct pm_qos_request cpu_latency;
 };
 
 int msm_video_register(struct camss_video *video, struct v4l2_device *v4l2_dev,

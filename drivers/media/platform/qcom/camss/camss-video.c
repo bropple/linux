@@ -240,6 +240,16 @@ static int video_prepare_streaming(struct vb2_queue *q)
 	return ret;
 }
 
+/*
+ * While streaming, CPUs stay out of idle states slower than this to wake.
+ * The VFE re-arms its frame drop pattern from each frame's interrupt; one
+ * handled late drops a frame, and a dropped frame raises no interrupt, so
+ * the rest of the 30-frame drop period goes too: a second without frames.
+ * On msm8917 that happened several times a minute with the cores allowed
+ * into power collapse (305 us to wake), and never without.
+ */
+#define CAMSS_CPU_LATENCY_US	100
+
 static int video_start_streaming(struct vb2_queue *q, unsigned int count)
 {
 	struct camss_video *video = vb2_get_drv_priv(q);
@@ -277,6 +287,9 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
 			goto error;
 	}
 
+	if (!cpu_latency_qos_request_active(&video->cpu_latency))
+		cpu_latency_qos_add_request(&video->cpu_latency,
+					    CAMSS_CPU_LATENCY_US);
 	return 0;
 
 error:
@@ -296,6 +309,9 @@ static void video_stop_streaming(struct vb2_queue *q)
 	struct media_pad *pad;
 	struct v4l2_subdev *subdev;
 	int ret;
+
+	if (cpu_latency_qos_request_active(&video->cpu_latency))
+		cpu_latency_qos_remove_request(&video->cpu_latency);
 
 	entity = &vdev->entity;
 	while (1) {
