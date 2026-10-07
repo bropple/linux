@@ -375,10 +375,13 @@
 };
 
 &cci_i2c0 {
-	/* Rear: GC5035, 5 MP, two lanes on CSIPHY0, mounted at 90 degrees */
-	camera@3f {
+	/*
+	 * Rear: GC5035, 5 MP, two lanes on CSIPHY0, mounted at 90 degrees.
+	 * Strapped to 0x37 (stock: slave address 0x6e), not the Nokia's 0x3f.
+	 */
+	camera@37 {
 		compatible = "galaxycore,gc5035";
-		reg = <0x3f>;
+		reg = <0x37>;
 
 		resetb-gpios = <&tlmm 36 GPIO_ACTIVE_LOW>;
 		pwdn-gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
