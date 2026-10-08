@@ -286,6 +286,8 @@ static void wcn36xx_update_survey(struct wcn36xx *wcn, int rssi, int snr,
 		idx = wcn->hw->wiphy->bands[NL80211_BAND_2GHZ]->n_channels;
 
 	sband = wcn->hw->wiphy->bands[band];
+	if (!sband)
+		return;
 	channel = sband->channels;
 
 	for (i = 0; i < sband->n_channels; i++, channel++) {
@@ -367,12 +369,15 @@ int wcn36xx_rx_skb(struct wcn36xx *wcn, struct sk_buff *skb)
 		 */
 		u8 hwch = (bd->reserved0 << 4) + bd->rx_ch;
 
-		/* FIXME: For some reason WCN3620 sometimes sends packets that
-		 * look like 5 GHz even though it is 2.4 GHz only...
+		/* FIXME: For some reason the 2.4 GHz only chips (WCN3620,
+		 * WCN3610) sometimes send packets that look like 5 GHz. With
+		 * no 5 GHz band registered, taking them as 5 GHz dereferences
+		 * the missing band (a NULL pointer, in the RX interrupt).
 		 */
 		if (bd->rf_band != 1 && hwch <= sizeof(ab_rx_ch_map) && hwch >= 1 &&
-		    !DO_ONCE_LITE_IF(wcn->rf_id == RF_IRIS_WCN3620, wcn36xx_warn,
-				     "Received 5 GHz band packet on WCN3620? "
+		    !DO_ONCE_LITE_IF(!wcn->hw->wiphy->bands[NL80211_BAND_5GHZ],
+				     wcn36xx_warn,
+				     "Received 5 GHz band packet on a 2.4 GHz only chip? "
 				     "(rf_band %d, hwch %d)\n", bd->rf_band, hwch)) {
 			status.band = NL80211_BAND_5GHZ;
 			status.freq = ieee80211_channel_to_frequency(ab_rx_ch_map[hwch - 1],
