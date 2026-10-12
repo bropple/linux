@@ -12,6 +12,7 @@
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
+#include <linux/pm_wakeirq.h>
 #include <linux/extcon-provider.h>
 #include <linux/mod_devicetable.h>
 
@@ -260,6 +261,7 @@ static int pm8916_lbc_charger_probe(struct platform_device *pdev)
 	chg = devm_kzalloc(dev, sizeof(*chg), GFP_KERNEL);
 	if (!chg)
 		return -ENOMEM;
+	platform_set_drvdata(pdev, chg);
 
 	chg->dev = dev;
 
@@ -340,6 +342,17 @@ static int pm8916_lbc_charger_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
+	/*
+	 * A cable plugged in or out wakes the system: the interrupt is an
+	 * edge, and masked through a suspend that edge was lost, and with it
+	 * the cable (extcon kept USB off). The resume reads the state again
+	 * too.
+	 */
+	device_init_wakeup(dev, true);
+	ret = devm_pm_set_wake_irq(dev, irq);
+	if (ret)
+		dev_warn(dev, "no wakeup on a cable: %d\n", ret);
+
 	ret = regmap_read(chg->regmap, chg->reg[LBC_USB] + PM8916_INT_RT_STS, &tmp);
 	if (ret)
 		goto comm_error;
@@ -367,10 +380,21 @@ static const struct of_device_id pm8916_lbc_charger_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, pm8916_lbc_charger_of_match);
 
+static int pm8916_lbc_charger_resume(struct device *dev)
+{
+	struct pm8916_lbc_charger *chg = dev_get_drvdata(dev);
+
+	pm8916_lbc_charger_state_changed_irq(0, chg);
+	return 0;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(pm8916_lbc_charger_pm_ops, NULL, pm8916_lbc_charger_resume);
+
 static struct platform_driver pm8916_lbc_charger_driver = {
 	.driver = {
 		.name = "pm8916-lbc",
 		.of_match_table = pm8916_lbc_charger_of_match,
+		.pm = pm_sleep_ptr(&pm8916_lbc_charger_pm_ops),
 	},
 	.probe = pm8916_lbc_charger_probe,
 };
