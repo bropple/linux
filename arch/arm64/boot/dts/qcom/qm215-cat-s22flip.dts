@@ -549,6 +549,12 @@
 	firmware-name = "qcom/qm215/cat/s22flip/mba.mbn",
 			"qcom/qm215/cat/s22flip/modem.mbn";
 	status = "okay";
+
+	/* Calls and texts wake the phone from a suspend (the modem is
+	 * silent otherwise: no message in a 300 s s2idle) */
+	smd-edge {
+		wakeup-source;
+	};
 };
 
 /* Stock modem_region: 0x86800000, size 0x5500000 */
@@ -625,6 +631,8 @@
 
 &pm8916_resin {
 	linux,code = <KEY_VOLUMEDOWN>;
+	/* Reachable with the lid closed, like volume up: it wakes the phone */
+	wakeup-source;
 	status = "okay";
 };
 
