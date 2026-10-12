@@ -1337,61 +1337,37 @@ static int spi_qup_pm_resume_runtime(struct device *device)
 #endif /* CONFIG_PM */
 
 #ifdef CONFIG_PM_SLEEP
+/*
+ * Runtime PM powers the controller down for the sleep and, on the way
+ * back, up again only if it was in use: powering it up unconditionally
+ * left it running (and XO voted) after every resume, while runtime PM
+ * still had it suspended and never powered it down again.
+ */
 static int spi_qup_suspend(struct device *device)
 {
 	struct spi_controller *host = dev_get_drvdata(device);
-	struct spi_qup *controller = spi_controller_get_devdata(host);
 	int ret;
 
-	if (pm_runtime_suspended(device)) {
-		ret = spi_qup_pm_resume_runtime(device);
-		if (ret)
-			return ret;
-	}
 	ret = spi_controller_suspend(host);
 	if (ret)
 		return ret;
 
-	ret = spi_qup_set_state(controller, QUP_STATE_RESET);
+	ret = pm_runtime_force_suspend(device);
 	if (ret)
-		return ret;
-
-	clk_disable_unprepare(controller->cclk);
-	spi_qup_vote_bw(controller, 0);
-	clk_disable_unprepare(controller->iclk);
-	return 0;
+		spi_controller_resume(host);
+	return ret;
 }
 
 static int spi_qup_resume(struct device *device)
 {
 	struct spi_controller *host = dev_get_drvdata(device);
-	struct spi_qup *controller = spi_controller_get_devdata(host);
 	int ret;
 
-	ret = clk_prepare_enable(controller->iclk);
+	ret = pm_runtime_force_resume(device);
 	if (ret)
 		return ret;
 
-	ret = clk_prepare_enable(controller->cclk);
-	if (ret) {
-		clk_disable_unprepare(controller->iclk);
-		return ret;
-	}
-
-	ret = spi_qup_set_state(controller, QUP_STATE_RESET);
-	if (ret)
-		goto disable_clk;
-
-	ret = spi_controller_resume(host);
-	if (ret)
-		goto disable_clk;
-
-	return 0;
-
-disable_clk:
-	clk_disable_unprepare(controller->cclk);
-	clk_disable_unprepare(controller->iclk);
-	return ret;
+	return spi_controller_resume(host);
 }
 #endif /* CONFIG_PM_SLEEP */
 
