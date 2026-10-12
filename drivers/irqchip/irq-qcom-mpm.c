@@ -23,6 +23,7 @@
 #include <linux/soc/qcom/irq.h>
 #include <linux/spinlock.h>
 
+#include <linux/suspend.h>
 #include <clocksource/arm_arch_timer.h>
 
 /*
@@ -301,12 +302,21 @@ static irqreturn_t qcom_mpm_handler(int irq, void *dev_id)
  * the cluster states that notify RPM, the CPUs wake only for MPM pins and
  * this timer; without it, kernel timers stop firing while every other
  * subsystem sleeps. ~0 means no timer.
+ *
+ * Not in s2idle: the CPUs' timers are frozen then (tick_freeze) and the
+ * domains' next timer is stale, already past, so the RPM woke the AP at
+ * once, some 490 times a second, and VDD minimisation was never reached
+ * in a suspend. There only the wake pins (and the RTC alarm, through
+ * SPMI) wake the AP.
  */
 static void mpm_set_wakeup_timer(struct qcom_mpm_priv *priv)
 {
 	ktime_t next = KTIME_MAX;
 	struct gpd_link *link;
 	u64 ticks = U64_MAX;
+
+	if (idle_should_enter_s2idle())
+		goto write;
 
 	list_for_each_entry(link, &priv->genpd.parent_links, parent_node) {
 		struct generic_pm_domain *child = link->child;
@@ -328,6 +338,7 @@ static void mpm_set_wakeup_timer(struct qcom_mpm_priv *priv)
 						 NSEC_PER_SEC);
 	}
 
+write:
 	writel_relaxed(lower_32_bits(ticks), priv->base);
 	writel_relaxed(upper_32_bits(ticks), priv->base + 4);
 }
