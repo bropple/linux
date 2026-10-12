@@ -324,9 +324,12 @@ static int ci_hdrc_msm_runtime_resume(struct device *dev)
  * puts the controller in low power: without callbacks here the glue's
  * clocks then stayed on through the sleep (and XO with them). Gate them
  * once the core is done; back on afterwards only if they were on before.
+ * Late and early: this glue's suspend runs before the core's (its child),
+ * which then touched the registers unclocked (a synchronous external
+ * abort in ci_hdrc_enter_lpm_common()).
  */
 static const struct dev_pm_ops ci_hdrc_msm_pm_ops = {
-	SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
+	LATE_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
 	RUNTIME_PM_OPS(ci_hdrc_msm_runtime_suspend,
 		       ci_hdrc_msm_runtime_resume, NULL)
 };
