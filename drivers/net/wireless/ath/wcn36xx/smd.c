@@ -2352,11 +2352,16 @@ int wcn36xx_smd_set_power_params(struct wcn36xx *wcn, bool ignore_dtim)
 	INIT_HAL_MSG(msg_body, WCN36XX_HAL_SET_POWER_PARAMS_REQ);
 
 	/*
-	 * When host is down ignore every second dtim
+	 * When host is down ignore every second dtim, and drop broadcast and
+	 * multicast frames: each one raised the RX interrupt, a wakeup source,
+	 * and woke the suspended host (every few seconds with IPv6 router
+	 * advertisements). ARP and IPv6 neighbour solicitations are answered
+	 * by the firmware's offloads meanwhile.
 	 */
 	if (ignore_dtim) {
 		msg_body.ignore_dtim = 1;
 		msg_body.dtim_period = 2;
+		msg_body.bcast_mcast_filter = 3;	/* both */
 	}
 	msg_body.listen_interval = WCN36XX_LISTEN_INTERVAL(wcn);
 
