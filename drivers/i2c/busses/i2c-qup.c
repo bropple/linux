@@ -1995,22 +1995,8 @@ static int qup_i2c_pm_resume_runtime(struct device *device)
 	return 0;
 }
 
-static int qup_i2c_suspend(struct device *device)
-{
-	if (!pm_runtime_suspended(device))
-		return qup_i2c_pm_suspend_runtime(device);
-	return 0;
-}
-
-static int qup_i2c_resume(struct device *device)
-{
-	qup_i2c_pm_resume_runtime(device);
-	pm_request_autosuspend(device);
-	return 0;
-}
-
 static const struct dev_pm_ops qup_i2c_qup_pm_ops = {
-	SYSTEM_SLEEP_PM_OPS(qup_i2c_suspend, qup_i2c_resume)
+	SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
 	RUNTIME_PM_OPS(qup_i2c_pm_suspend_runtime,
 		       qup_i2c_pm_resume_runtime, NULL)
 };
