@@ -100,6 +100,7 @@ static const struct {
  * @edge_id:		identifier of this edge
  * @remote_pid:		identifier of remote processor
  * @irq:		interrupt for signals on this edge
+ * @wakeup:		the interrupt is armed to wake the system (wakeup-source)
  * @ipc_regmap:		regmap handle holding the outgoing ipc register
  * @ipc_offset:		offset within @ipc_regmap of the register for ipc
  * @ipc_bit:		bit in the register at @ipc_offset of @ipc_regmap
@@ -123,6 +124,7 @@ struct qcom_smd_edge {
 	unsigned remote_pid;
 
 	int irq;
+	bool wakeup;
 
 	struct regmap *ipc_regmap;
 	int ipc_offset;
@@ -1428,6 +1430,19 @@ static int qcom_smd_parse_edge(struct device *dev,
 
 	edge->irq = irq;
 
+	/*
+	 * An edge that is a wakeup source (a modem: calls, texts) keeps its
+	 * interrupt armed through a system suspend, and its message wakes
+	 * the system.
+	 */
+	if (of_property_read_bool(node, "wakeup-source")) {
+		ret = enable_irq_wake(irq);
+		if (ret)
+			dev_warn(dev, "%s: no wakeup: %d\n", edge->name, ret);
+		else
+			edge->wakeup = true;
+	}
+
 	return 0;
 
 put_node:
@@ -1542,6 +1557,8 @@ void qcom_smd_unregister_edge(struct qcom_smd_edge *edge)
 {
 	int ret;
 
+	if (edge->wakeup)
+		disable_irq_wake(edge->irq);
 	disable_irq(edge->irq);
 	cancel_work_sync(&edge->scan_work);
 	cancel_work_sync(&edge->state_work);
