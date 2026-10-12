@@ -413,6 +413,35 @@ static void wusb3801_remove(struct i2c_client *client)
 		regulator_disable(wusb3801->vbus_supply);
 }
 
+/*
+ * The interrupt handler reads the chip over I2C, which runtime PM refuses
+ * for most of a system sleep (-EACCES): a cable plugged in during a
+ * suspend was lost, and USB stayed off until it was plugged in again. Keep
+ * the interrupt off while the system sleeps and read the port on resume,
+ * when the bus is back.
+ */
+static int wusb3801_suspend(struct device *dev)
+{
+	disable_irq(to_i2c_client(dev)->irq);
+
+	return 0;
+}
+
+static int wusb3801_resume(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct wusb3801 *wusb3801 = i2c_get_clientdata(client);
+	unsigned int dummy;
+
+	regmap_read(wusb3801->regmap, WUSB3801_REG_INT, &dummy);
+	wusb3801_hw_update(wusb3801);
+	enable_irq(client->irq);
+
+	return 0;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(wusb3801_pm_ops, wusb3801_suspend, wusb3801_resume);
+
 static const struct of_device_id wusb3801_of_match[] = {
 	{ .compatible = "willsemi,wusb3801" },
 	{}
@@ -425,6 +454,7 @@ static struct i2c_driver wusb3801_driver = {
 	.driver		= {
 		.name		= "wusb3801",
 		.of_match_table	= wusb3801_of_match,
+		.pm		= pm_sleep_ptr(&wusb3801_pm_ops),
 	},
 };
 
