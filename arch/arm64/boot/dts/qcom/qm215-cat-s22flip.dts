@@ -475,6 +475,15 @@
 	};
 };
 
+/*
+ * The modem's location engine asks for 2 MiB over QMI memshare when it
+ * starts, and finds no satellites without it (stock gives it the same,
+ * memshare client "GPS", allocated at boot)
+ */
+&gps_mem {
+	status = "okay";
+};
+
 &gpu {
 	status = "okay";
 };
@@ -543,6 +552,10 @@
 &mdss_dsi0_phy {
 	vddio-supply = <&pm8916_l6>;
 	qcom,dsi-phy-regulator-ldo-mode;
+};
+
+&memshare {
+	status = "okay";
 };
 
 &modem {
