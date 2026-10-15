@@ -284,7 +284,7 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
 
 		ret = v4l2_subdev_call(subdev, video, s_stream, 1);
 		if (ret < 0 && ret != -ENOIOCTLCMD)
-			goto error;
+			goto stop_started;
 	}
 
 	if (!cpu_latency_qos_request_active(&video->cpu_latency))
@@ -292,6 +292,26 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
 					    CAMSS_CPU_LATENCY_US);
 	return 0;
 
+stop_started:
+	/*
+	 * Stop what did start (VFE, ISPIF, CSID, CSIPHY, nearest first) when
+	 * a later one fails, usually the sensor. Left running, each retry
+	 * met them already started (call_s_stream's WARN, no restart) and
+	 * the camera stayed down until a reboot.
+	 */
+	entity = &vdev->entity;
+	while (1) {
+		pad = &entity->pads[0];
+		if (!(pad->flags & MEDIA_PAD_FL_SINK))
+			break;
+		pad = media_pad_remote_pad_first(pad);
+		if (!pad || !is_media_entity_v4l2_subdev(pad->entity) ||
+		    pad->entity == &subdev->entity)
+			break;
+		entity = pad->entity;
+		v4l2_subdev_call(media_entity_to_v4l2_subdev(entity), video,
+				 s_stream, 0);
+	}
 error:
 	video_device_pipeline_stop(vdev);
 
