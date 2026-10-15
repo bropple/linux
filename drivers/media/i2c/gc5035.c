@@ -1449,7 +1449,6 @@ static int gc5035_runtime_resume(struct device *dev)
 		goto disable_iovdd;
 	}
 
-	gpiod_set_value_cansleep(gc5035->resetb_gpio, 0);
 	gpiod_set_value_cansleep(gc5035->pwdn_gpio, 0);
 
 	ret = clk_prepare_enable(gc5035->mclk);
@@ -1458,9 +1457,18 @@ static int gc5035_runtime_resume(struct device *dev)
 		goto enable_pwdn;
 	}
 
+	/*
+	 * Reset held while the rails settle and MCLK runs: the rails report
+	 * enabled at once, and with reset released 50 us after them the
+	 * first write was NACKed on every power-up for an afternoon.
+	 * The same 1 ms as the GC02M2 next to it.
+	 */
+	usleep_range(1000, 1500);
+	gpiod_set_value_cansleep(gc5035->resetb_gpio, 0);
+
 	/* min. 1200 MCLK cycles required before first I2C transaction. */
 	delay = DIV_ROUND_UP(1200UL * USEC_PER_SEC, gc5035->mclk_rate);
-	usleep_range(delay, delay + 200);
+	usleep_range(max(delay, 1000UL), max(delay, 1000UL) + 500);
 
 	return 0;
 
