@@ -1518,7 +1518,9 @@
 			iommu-ctx@0 {
 				compatible = "qcom,msm-iommu-v2-ns";
 				reg = <0 0x1000>;
-				interrupts = <GIC_SPI 240 IRQ_TYPE_LEVEL_HIGH>;
+				/* Not 240 as in the stock DT: that one never fires,
+				 * and every fault left the GPU stalled for good */
+				interrupts = <GIC_SPI 248 IRQ_TYPE_LEVEL_HIGH>;
 			};
 		};
 
