@@ -566,6 +566,15 @@ static int qcom_smsm_probe(struct platform_device *pdev)
 		if (!ret)
 			continue;
 
+		/*
+		 * The mailbox exists but is not ready yet: wait for it. The
+		 * syscon fallback finds no qcom,ipc-N and would leave this
+		 * host without any kick. fw_devlink does not order us after
+		 * the mailbox, as the <0> entries in "mboxes" end its parse.
+		 */
+		if (ret == -EPROBE_DEFER)
+			goto out_put;
+
 		ret = smsm_parse_ipc(smsm, id);
 		if (ret < 0)
 			goto out_put;
